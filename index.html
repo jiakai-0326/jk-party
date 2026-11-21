@@ -706,9 +706,10 @@ html.kb .sm-q{padding:8px}html.kb .sm-q b{font-size:22px}
 /* 屁屁泳圈 */
 .ft-pad{display:flex;gap:10px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#0d1a12;align-items:stretch;user-select:none;-webkit-user-select:none;touch-action:none}
 .ft-pad button{-webkit-tap-highlight-color:transparent;touch-action:none;border:0;border-radius:18px;font:inherit;color:#fff}
-.ft-joy{flex:0 0 46%;position:relative;min-height:96px;border-radius:18px;background:#24382b;box-shadow:inset 0 -4px 0 rgba(0,0,0,.35);touch-action:none;display:flex;align-items:center;justify-content:center}
-.ft-joy .ft-ring{width:76px;height:76px;border-radius:50%;border:9px solid #ff8a3c;box-sizing:border-box;opacity:.85}
-.ft-joy b{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.5);transition:transform .05s linear}
+.ft-joy{flex:0 0 46%;position:relative;min-height:110px;border-radius:18px;background:#24382b;box-shadow:inset 0 -4px 0 rgba(0,0,0,.35);touch-action:none;display:flex;align-items:center;justify-content:center}
+.ft-joy .ft-ring{width:96px;height:96px;border-radius:50%;background:rgba(0,0,0,.25);border:3px solid rgba(255,255,255,.25);box-sizing:border-box}
+.ft-joy b{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#fff,#cfd6dc);box-shadow:0 3px 8px rgba(0,0,0,.5);pointer-events:none}
+.ft-joy:not(.on) b{transition:transform .12s ease-out}
 .ft-joy small{position:absolute;left:8px;bottom:6px;font-size:10px;line-height:1.2;opacity:.6;color:#fff;font-weight:700}
 .ft-joy.on{background:#3b5c46}
 .ft-mv{flex:1;font-size:30px;background:#24382b;box-shadow:inset 0 -4px 0 rgba(0,0,0,.35)}
@@ -5597,8 +5598,8 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       const n = G.rings[mk].ids.length, h = ftHalf(n);
       if (my.dir) my.off = clamp(my.off + my.dir * FT.SEAT_V * (Math.PI / 180) * dt, -h, h);
       const home = ftSeatA(n, G.rings[mk].ids.indexOf(me.id)) + ft.rings[mk].th;
-      if (my.joy != null) { const des = clamp(Math.atan2(Math.sin(my.joy - home), Math.cos(my.joy - home)), -h, h), st2 = 4.5 * dt; my.off += clamp(des - my.off, -st2, st2); } // 摇杆：拖去哪个方向，自己就坐到圈的那一边
-      const kn = $('#ftKnob'); if (kn) { const a = home + my.off, rr3 = 34; kn.style.transform = `translate(${Math.cos(a) * rr3}px,${Math.sin(a) * rr3}px)`; }
+      if (my.joy != null) { const des = clamp(Math.atan2(Math.sin(my.joy - home), Math.cos(my.joy - home)), -h, h), st2 = 30 * dt; my.off += clamp(des - my.off, -st2, st2); } // 摇杆：拖去哪个方向，自己就坐到圈的那一边
+      
       const mr = ft.rings[mk], want = run && my.hold && my.gas > 0.02 && !ft.done[mk] && !mr.dead && !mr.out;
       if (want && !my.f) { my.tw = (Math.random() - 0.5) * 1.6; sfx.fart(); fx.vib(30); }
       my.f = want; my.gas = clamp(my.gas + (my.f ? (mr.buff > 0 ? 0 : -FT.GD) : FT.GR) * dt, 0, 1);
@@ -5619,7 +5620,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
         const hit = ftStep(ft.c, ft.rings[k], ftSeats(G, k), el, h2, ft.rings);
         if (hit && k === mk && now - ft.hitAt > 500) { ft.hitAt = now; if (hit === 2) { sfx.err(); fx.vib(120); fx.flash('rgba(255,80,80,.35)'); } else { sfx.hit(); fx.vib(40); } }
       });
-      for (const r of ft.rings) if (r.cor) { const a = Math.min(1, dt * 6); for (const k of ['x', 'y', 'th']) { r[k] += r.cor[k] * a; r.cor[k] *= 1 - a; } }
+      for (const r of ft.rings) if (r.cor) { const a = Math.min(1, dt * 3); for (const k of ['x', 'y', 'th']) { r[k] += r.cor[k] * a; r.cor[k] *= 1 - a; } }
     }
     // 房主：判断死亡 / 吃辣椒
     if (role === 'host' && run) G.rings.forEach((rg, k) => {
@@ -5797,16 +5798,16 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
           <div style="flex:1"></div>${isHost ? `<button class="btn gold big" id="ftAgain">再比一次（重新分队）</button><button class="btn" id="ftLobby">回大厅</button>` : '<div class="wait">等房主</div>'}</div>`;
       }
       return {
-        html: `<div class="cv" id="ftcv">${end}</div>${mk >= 0 && !done ? `<div class="ft-pad"><div class="ft-joy" id="ftJoy"><div class="ft-ring"></div><b id="ftKnob"></b><small>拖去哪里<br>就坐去哪里</small></div><button class="ft-go nohold" id="ftGo"><i id="ftGas"></i><span>💨</span><small>按住放屁</small></button></div>` : ''}`,
+        html: `<div class="cv" id="ftcv">${end}</div>${mk >= 0 && !done ? `<div class="ft-pad"><div class="ft-joy" id="ftJoy"><div class="ft-ring"></div><b id="ftKnob"></b><small>摇杆：推哪边<br>就坐去哪边</small></div><button class="ft-go nohold" id="ftGo"><i id="ftGas"></i><span>💨</span><small>按住放屁</small></button></div>` : ''}`,
         bind() {
           const s = ftSetup(V), cv = $('#ftcv'); if (cv) cv.insertBefore(s.canvas, cv.firstChild);
           on('ftAgain', lobby.start); on('ftLobby', lobby.toLobby);
           on('ftNext', () => save(st => { st.opts.fart = { ...(st.opts.fart || {}), map: st.g.map + 1, mode: 'coop' }; }) && setTimeout(lobby.start, 400));
           const hold = (el, down, up) => { if (!el) return; el.onpointerdown = e => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch {} down(); el.classList.add('on'); }; el.onpointerup = el.onpointercancel = el.onlostpointercapture = () => { up(); el.classList.remove('on'); }; };
           hold($('#ftGo'), () => (s.my.hold = true), () => (s.my.hold = false));
-          const joy = $('#ftJoy'); if (joy) { const mv = e => { const b = joy.getBoundingClientRect(), dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2); if (Math.hypot(dx, dy) > 10) s.my.joy = Math.atan2(dy, dx); };
+          const joy = $('#ftJoy'); if (joy) { const mv = e => { const b = joy.getBoundingClientRect(), dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2); const d = Math.hypot(dx, dy), k = Math.min(1, 38 / (d || 1)), kn = $('#ftKnob'); if (kn) kn.style.transform = `translate(${dx * k}px,${dy * k}px)`; if (d > 8) s.my.joy = Math.atan2(dy, dx); };
             joy.onpointerdown = e => { e.preventDefault(); try { joy.setPointerCapture(e.pointerId); } catch {} joy.classList.add('on'); mv(e); }; joy.onpointermove = e => { if (joy.classList.contains('on')) mv(e); };
-            joy.onpointerup = joy.onpointercancel = joy.onlostpointercapture = () => { joy.classList.remove('on'); s.my.joy = null; }; }
+            joy.onpointerup = joy.onpointercancel = joy.onlostpointercapture = () => { joy.classList.remove('on'); s.my.joy = null; const kn = $('#ftKnob'); if (kn) kn.style.transform = ''; }; }
           if (done && fx.once('ftdone:' + s.key)) { const win = g.mode === 'coop' ? g.clear : g.win === mk; if (win) { sfx.big(); fx.confetti(); } else sfx.lose(); }
         },
       };
