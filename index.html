@@ -5620,7 +5620,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       const n = G.rings[mk].ids.length, h = ftHalf(n);
       if (my.dir) my.off = clamp(my.off + my.dir * FT.SEAT_V * (Math.PI / 180) * dt, -h, h);
       const home = ftSeatA(n, G.rings[mk].ids.indexOf(me.id)) + ft.rings[mk].th;
-      if (my.joy != null) { const des = clamp(Math.atan2(Math.sin(my.joy - home), Math.cos(my.joy - home)), -h, h), st2 = 30 * dt; my.off += clamp(des - my.off, -st2, st2); } // 摇杆：拖去哪个方向，自己就坐到圈的那一边
+      if (my.joy != null) { const d = Math.atan2(Math.sin(my.joy - home - my.off), Math.cos(my.joy - home - my.off)), st2 = 30 * dt; my.off += clamp(d, -st2, st2); my.off = n <= 2 ? Math.atan2(Math.sin(my.off), Math.cos(my.off)) : clamp(my.off, -h, h); } // 走最短的那一边；3 人以上碰到自己那格的边就停 // 摇杆：拖去哪个方向，自己就坐到圈的那一边
       
       const mr = ft.rings[mk], want = run && my.hold && my.gas > 0.02 && !ft.done[mk] && !mr.dead && !mr.out;
       if (want && !my.f) { my.tw = (Math.random() - 0.5) * 1.6; sfx.fart(); fx.vib(30); }
