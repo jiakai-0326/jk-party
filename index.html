@@ -5460,34 +5460,58 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   // 每个人只可以在自己那一格里面左右移动。撞到石头 / 刺墙泳圈会转。
   // 合作：一关一关过，时间内到终点。两队比赛：两个泳圈抢先到终点，可以互撞。
   // 网络：每个人只送自己的「位置 + 有没有在放屁」；房主算泳圈的物理，0.1 秒广播一次；大家用同样的物理自己补中间。
-  const FT = { R: 58, P: 430, DRAG: 1.15, ADRAG: 1.6, SEAT_V: 150, MAXSEAT: 6, W: 470 };
+  const FT = { R: 58, P: 330, DRAG: 1.15, ADRAG: 1.6, SEAT_V: 150, GD: 0.34, GR: 0.4, MAXSEAT: 6, W: 470 };
   const FT_ANI = ['🐷', '🐶', '🐱', '🐸', '🐵', '🐰', '🐼', '🦊', '🐨', '🐯', '🐮', '🐔'];
+  // 机关：💣水雷 🐊鳄鱼 🦈鲨鱼 ⚡电门 🌀漩涡中心 🌵刺墙 = 会死；🪵木头 🪨石头 = 弹开；🌶️辣椒 = 屁力加倍
   const FT_MAPS = [
-    { name: '小河漂漂', icon: '🏞️', L: 3400, w: 300, cur: 38, rocks: 7, logs: 0, pools: 0, spikes: false, limit: 60, drag: 1 },
-    { name: '鳄鱼湾', icon: '🐊', L: 4000, w: 255, cur: 30, rocks: 8, logs: 5, pools: 0, spikes: true, limit: 75, drag: 1 },
-    { name: '漩涡谷', icon: '🌀', L: 4300, w: 285, cur: 24, rocks: 6, logs: 2, pools: 6, spikes: false, limit: 85, drag: 1 },
-    { name: '冰湖滑滑', icon: '🧊', L: 4000, w: 300, cur: 0, rocks: 14, logs: 2, pools: 1, spikes: false, limit: 80, drag: 0.35 },
-    { name: '刺刺大峡谷', icon: '🌵', L: 4800, w: 215, cur: 28, rocks: 9, logs: 5, pools: 4, spikes: true, limit: 100, drag: 1 },
+    { name: '小河漂漂', icon: '🏞️', L: 6000, w: 310, cur: 30, rocks: 9, logs: 0, pools: 1, spikes: false, mines: 6, gates: 0, sharks: 0, chili: 3, rapids: 3, drag: 1 },
+    { name: '鳄鱼湾', icon: '🐊', L: 7000, w: 290, cur: 26, rocks: 7, logs: 6, pools: 1, spikes: true, mines: 6, gates: 0, sharks: 0, chili: 3, rapids: 3, drag: 1 },
+    { name: '漩涡谷', icon: '🌀', L: 7500, w: 300, cur: 22, rocks: 6, logs: 2, pools: 8, spikes: false, mines: 7, gates: 1, sharks: 0, chili: 3, rapids: 4, drag: 1 },
+    { name: '冰湖电门', icon: '⚡', L: 7500, w: 310, cur: 0, rocks: 13, logs: 1, pools: 2, spikes: false, mines: 6, gates: 6, sharks: 0, chili: 3, rapids: 3, drag: 0.35 },
+    { name: '鲨鱼海', icon: '🦈', L: 8000, w: 320, cur: 18, rocks: 7, logs: 0, pools: 2, spikes: false, mines: 8, gates: 3, sharks: 7, chili: 4, rapids: 4, drag: 0.8 },
+    { name: '刺刺大峡谷', icon: '🌵', L: 9000, w: 270, cur: 24, rocks: 7, logs: 5, pools: 4, spikes: true, mines: 8, gates: 4, sharks: 4, chili: 4, rapids: 6, drag: 1 },
   ];
+  const FT_LIVES = 3, FT_DEAD = 1.7;
+  const FT_WHY = { bank: '💥 撞到岸边了！', spike: '🌵 撞到刺了！', whirl: '🌀 被漩涡吸走！', mine: '💣 碰到水雷！', croc: '🐊 被鳄鱼咬！', shark: '🦈 被鲨鱼咬！', zap: '⚡ 被电到了！' };
   function ftCourse(mi) { // 地图：河道中线、宽度、石头、木头、漩涡（同一张地图大家算出来一样）
-    const m = FT_MAPS[mi], r = rng32(9000 + mi * 77), c = { m, L: m.L, rocks: [], logs: [], pools: [] };
+    const m = FT_MAPS[mi], r = rng32(9000 + mi * 77), c = { m, L: m.L, rocks: [], logs: [], pools: [], mines: [], chili: [], gates: [], sharks: [], cps: Array.from({ length: Math.floor((m.L - 400) / 900) }, (_, k) => -(k + 1) * 900), rapids: [] };
     const ph = [r() * 6, r() * 6, r() * 6];
     c.cx = y => 160 * Math.sin(y * 0.0011 + ph[0]) * Math.min(1, -y / 700) + 70 * Math.sin(y * 0.0029 + ph[1]);
     c.hw = y => m.w + 45 * Math.sin(y * 0.002 + ph[2]);
-    const free = (x, y, rad) => c.rocks.concat(c.pools).every(o => Math.hypot(o.x - x, o.y - y) > o.r + rad + 2 * FT.R);
+    const free = (x, y, rad) => c.rocks.concat(c.pools, c.mines, c.chili).every(o => Math.hypot(o.x - x, o.y - y) > o.r + rad + 2 * FT.R);
     for (let i = 0, k = 0; i < m.rocks && k < 400; k++) { const y = -500 - r() * (m.L - 800), rad = 26 + r() * 30, x = c.cx(y) + (r() - 0.5) * 1.5 * (c.hw(y) - rad); if (free(x, y, rad)) { c.rocks.push({ x, y, r: rad }); i++; } }
     for (let i = 0, k = 0; i < m.pools && k < 400; k++) { const y = -700 - r() * (m.L - 1100), x = c.cx(y) + (r() - 0.5) * c.hw(y), rad = 95 + r() * 40; if (free(x, y, rad)) { c.pools.push({ x, y, r: rad, s: r() < 0.5 ? 1 : -1 }); i++; } }
     for (let i = 0; i < m.logs; i++) { const y = -800 - ((i + 0.5) / m.logs) * (m.L - 1200); c.logs.push({ y, amp: c.hw(y) * 0.75, sp: 0.55 + r() * 0.5, ph: r() * 6, len: 150 + r() * 70 }); }
+    const put = (arr, n, rad, pre) => { for (let i = 0, k = 0; i < n && k < 500; k++) { const y = -650 - r() * (m.L - 950), x = c.cx(y) + (r() - 0.5) * 1.7 * (c.hw(y) - rad - 20); if (free(x, y, rad)) { arr.push({ x, y, r: rad, id: pre + i }); i++; } } };
+    for (let i = 0; i < m.rapids; i++) { const y0 = -900 - ((i + 0.3 + r() * 0.4) / m.rapids) * (m.L - 1500); c.rapids.push({ y0, y1: y0 - 200 - r() * 90, f: 400 }); }
+    put(c.mines, m.mines, 17, 'm'); put(c.chili, m.chili, 22, 'c');
+    for (let i = 0; i < m.gates; i++) { const y = -1000 - ((i + 0.5) / m.gates) * (m.L - 1500); c.gates.push({ y, per: 3.4 + r() * 1.2, on: 1.4 + r() * 0.5, ph: r() * 4 }); }
+    for (let i = 0; i < m.sharks; i++) { const y0 = -900 - ((i + 0.5) / m.sharks) * (m.L - 1300); c.sharks.push({ y0, ax: c.hw(y0) * 0.72, ay: 110 + r() * 70, sp: 0.6 + r() * 0.45, ph: r() * 6 }); }
     return c;
+  }
+  const ftShark = (c, s, t) => { const a = t * s.sp + s.ph; return { x: c.cx(s.y0) + Math.sin(a) * s.ax, y: s.y0 + Math.sin(2 * a) * s.ay * 0.5, dir: Math.cos(a) >= 0 ? 1 : -1 }; };
+  const ftGate = (g, t) => { const u = (((t + g.ph) % g.per) + g.per) % g.per; return u < g.on ? 2 : u > g.per - 0.7 ? 1 : 0; }; // 2 = 有电，1 = 快要有电
+  function ftHazard(c, ring, t, gone) { // 房主才判断死没死
+    const m = c.m, R = FT.R;
+    for (const o of c.chili) if (!gone.has(o.id) && Math.hypot(o.x - ring.x, o.y - ring.y) < o.r + R) return { chili: o.id };
+    { const cx = c.cx(ring.y), hw = c.hw(ring.y); if (Math.abs(ring.x - cx) > hw - R - 2) return { why: m.spikes ? 'spike' : 'bank' }; }
+    for (const p of c.pools) if (Math.hypot(p.x - ring.x, p.y - ring.y) < p.r * 0.22) return { why: 'whirl' };
+    for (const o of c.mines) if (!gone.has(o.id) && Math.hypot(o.x - ring.x, o.y - ring.y) < o.r + R * 0.85) return { why: 'mine', key: o.id };
+    if (m.spikes) for (const l of c.logs) if (Math.abs(l.y - ring.y) < 18 + R + 3) { const lx = ftLogX(c, l, t); for (let k = -2; k <= 2; k++) if (Math.hypot(lx + (k * l.len) / 4 - ring.x, l.y - ring.y) < 18 + R + 3) return { why: 'croc' }; }
+    for (const s of c.sharks) { const p = ftShark(c, s, t); if (Math.hypot(p.x - ring.x, p.y - ring.y) < 30 + R * 0.8) return { why: 'shark' }; }
+    for (const g of c.gates) if (Math.abs(g.y - ring.y) < R * 0.6 && ftGate(g, t) === 2) return { why: 'zap' };
+    return null;
   }
   const ftLogX = (c, l, t) => c.cx(l.y) + Math.sin(t * l.sp + l.ph) * l.amp;
   // 一个泳圈走一小步。seats = [{a: 在圈上的角度(相对), f: 有没有放屁}]
   function ftStep(c, ring, seats, t, dt, others) {
     const m = c.m;
     let fx2 = 0, fy2 = 0;
-    for (const s of seats) if (s.f) { const a = ring.th + s.a; fx2 -= Math.cos(a) * FT.P; fy2 -= Math.sin(a) * FT.P; ring.om += (s.tw || 0) * 0.9 * dt; }
+    const nf = seats.filter(s => s.f).length, P = FT.P * (0.45 + (0.9 * nf) / Math.max(1, seats.length)) * (ring.buff > 0 ? 1.8 : 1); ring.nf = nf; if (ring.buff) ring.buff = Math.max(0, ring.buff - dt); if (ring.inv) ring.inv = Math.max(0, ring.inv - dt);
+    for (const s of seats) if (s.f) { const a = ring.th + s.a; fx2 -= Math.cos(a) * P; fy2 -= Math.sin(a) * P; ring.om += (s.tw || 0) * 0.9 * dt; }
     fy2 -= m.cur; // 河水往前流
-    for (const p of c.pools) { const dx = ring.x - p.x, dy = ring.y - p.y, d = Math.hypot(dx, dy); if (d < p.r + FT.R * 0.5) { const k = 1 - d / (p.r + FT.R); fx2 += (-dy / d * p.s * 260 - dx / d * 90) * k; fy2 += (dx / d * p.s * 260 - dy / d * 90) * k; ring.om += p.s * 3.2 * k * dt; } }
+    for (const rp of c.rapids) if (ring.y < rp.y0 && ring.y > rp.y1) fy2 += rp.f; // 急流往回冲，要几个人一起放才上得去
+    for (const p of c.pools) { const dx = ring.x - p.x, dy = ring.y - p.y, d = Math.hypot(dx, dy); if (d < p.r + FT.R * 0.5) { const k = 1 - d / (p.r + FT.R); fx2 += (-dy / d * p.s * 300 - dx / d * 330) * k; fy2 += (dx / d * p.s * 300 - dy / d * 330) * k; ring.om += p.s * 3.2 * k * dt; } }
     const drag = FT.DRAG * m.drag;
     ring.vx += (fx2 - ring.vx * drag) * dt; ring.vy += (fy2 - ring.vy * drag) * dt;
     ring.om -= ring.om * FT.ADRAG * Math.max(0.4, m.drag) * dt;
@@ -5520,14 +5544,14 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   function ftStop() { if (ft) { cancelAnimationFrame(ft.raf); clearInterval(ft.iv); window.removeEventListener('keydown', ft.kd); window.removeEventListener('keyup', ft.ku); ft = null; } }
   const ftRingOf = (g, id) => g.rings.findIndex(r => r.ids.includes(id));
   const ftSeatA = (n, i) => -Math.PI / 2 + Math.PI + (i / n) * Math.PI * 2; // 第一个位子在后面（下面）
-  const ftHalf = n => Math.PI / n - 0.14; // 每个人可以移动的范围
-  const ftNewRing = (k, n) => ({ x: n > 1 ? (k ? 110 : -110) : 0, y: 0, vx: 0, vy: 0, th: 0, om: 0 });
+  const ftHalf = n => (n <= 2 ? Math.PI : Math.min(Math.PI * 0.9, (Math.PI / n) * 1.7)); // 人少可以移比较远，两个人也可以一起背对终点 // 每个人可以移动的范围
+  const ftNewRing = (k, n, coop) => ({ x: n > 1 ? (k ? 110 : -110) : 0, y: 0, vx: 0, vy: 0, th: 0, om: 0, dead: 0, inv: 0, lives: coop ? FT_LIVES : 0, cp: 0, buff: 0, out: false });
   function ftSetup(V) {
     const g = V.g, key = V.gid + ':' + g.seed;
     if (ft && ft.key === key) return ft;
     ftStop();
     const c = ftCourse(g.map), canvas = document.createElement('canvas');
-    ft = { key, c, canvas, rings: g.rings.map((r, k) => ftNewRing(k, g.rings.length)), inp: {}, my: { off: 0, f: false, gas: 1, dir: 0, tw: 0 }, sent: 0, sentK: '', snap: 0, done: {}, ended: false, puffs: [], pops: [], c0: 9, last: performance.now(), hitAt: 0, botGas: {}, botOff: {} };
+    ft = { key, c, canvas, rings: g.rings.map((r, k) => ftNewRing(k, g.rings.length, g.mode === 'coop')), gone: new Set(), inp: {}, my: { off: 0, f: false, gas: 1, dir: 0, tw: 0 }, sent: 0, sentK: '', snap: 0, done: {}, ended: false, puffs: [], pops: [], c0: 9, last: performance.now(), hitAt: 0, botGas: {}, botOff: {} };
     g.rings.forEach(r => r.ids.forEach(id => (ft.inp[id] = { off: 0, f: false, tw: 0 })));
     const kmap = { ArrowLeft: -1, ArrowRight: 1, a: -1, d: 1 };
     ft.kd = e => { if (e.key in kmap) { ft.my.dir = kmap[e.key]; e.preventDefault(); } if (e.key === ' ' || e.key === 'ArrowUp') { ft.my.hold = true; e.preventDefault(); } };
@@ -5541,16 +5565,21 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     const ids = g.rings[k].ids, n = ids.length;
     return ids.map((id, i) => { const p = id === me.id ? ft.my : ft.inp[id] || {}; return { id, a: ftSeatA(n, i) + (p.off || 0), f: !!p.f, tw: p.tw || 0 }; });
   }
-  function ftBot(g, k, id, i, t) { // 电脑：转到「背对要去的方向」的位置，对了就放屁
+  function ftBot(g, k, id, i, t, dt) { // 电脑：转到「背对要去的方向」的位置，对了就放屁
     const ring = ft.rings[k], c = ft.c, n = g.rings[k].ids.length;
-    const ty = ring.y - 320, tx = c.cx(ty), da = Math.atan2(ty - ring.y, tx - ring.x), want = da + Math.PI; // 屁要往后喷
+    const ty = ring.y - 320; let tx = c.cx(ty);
+    const haz = [...c.mines.filter(o => !ft.gone.has(o.id)), ...c.pools.map(p => ({ x: p.x, y: p.y, r: p.r * 0.5 })), ...c.sharks.map(s => ({ ...ftShark(c, s, t), r: 60 })), ...c.rocks];
+    let best = null; for (const o of haz) { const dy = ring.y - o.y; if (dy > 40 && dy < 420 && (!best || o.y > best.y)) { const lx = ring.x + (tx - ring.x) * (dy / 320); if (Math.abs(lx - o.x) < o.r + FT.R + 30) best = o; } }
+    if (best) { const side = Math.sign(ring.x - best.x) || 1, hw = c.hw(ty) - FT.R - 20; tx = clamp(best.x + side * (best.r + FT.R + 70), c.cx(ty) - hw, c.cx(ty) + hw); }
+    const gateWait = c.gates.some(g => ring.y - g.y > 20 && ring.y - g.y < 260 && ftGate(g, t) + ftGate(g, t + 1.1) > 0);
+    const da = Math.atan2(ty - ring.y, tx - ring.x), want = da + Math.PI; // 屁要往后喷
     const home = ftSeatA(n, i) + ring.th, h = ftHalf(n);
     let diff = Math.atan2(Math.sin(want - home), Math.cos(want - home)); diff = clamp(diff, -h, h);
     const p = ft.inp[id]; p.off += clamp(diff - p.off, -1, 1) * 0.12;
     const now = Math.atan2(Math.sin(home + p.off - want), Math.cos(home + p.off - want));
     const gas = (ft.botGas[id] = ft.botGas[id] ?? 1);
-    p.f = Math.abs(now) < 0.75 && gas > 0.08 && !(p.f === false && gas < 0.35);
-    ft.botGas[id] = clamp(gas + (p.f ? -0.5 : 0.3) * 0.05, 0, 1);
+    p.f = !gateWait && Math.abs(now) < 0.75 && gas > 0.05 && !(!p.f && gas < 0.5);
+    ft.botGas[id] = clamp(gas + (p.f ? (ring.buff > 0 ? 0 : -FT.GD) : FT.GR) * dt, 0, 1);
   }
   function ftFrame() {
     const G = S && S.phase === 'play' && S.game === 'fart' && S.g; if (!G || !ft) return;
@@ -5562,42 +5591,66 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     if (mk >= 0) {
       const n = G.rings[mk].ids.length, h = ftHalf(n);
       if (my.dir) my.off = clamp(my.off + my.dir * FT.SEAT_V * (Math.PI / 180) * dt, -h, h);
-      const want = run && my.hold && my.gas > 0.02 && !ft.done[mk];
+      const mr = ft.rings[mk], want = run && my.hold && my.gas > 0.02 && !ft.done[mk] && !mr.dead && !mr.out;
       if (want && !my.f) { my.tw = (Math.random() - 0.5) * 1.6; sfx.fart(); fx.vib(30); }
-      my.f = want; my.gas = clamp(my.gas + (my.f ? -0.55 : 0.3) * dt, 0, 1);
+      my.f = want; my.gas = clamp(my.gas + (my.f ? (mr.buff > 0 ? 0 : -FT.GD) : FT.GR) * dt, 0, 1);
       if (my.f && Math.random() < dt * 14) ftPuff(mk, ftSeats(G, mk).find(s => s.id === me.id));
       const k2 = `${Math.round(my.off * 20)}:${my.f ? 1 : 0}`;
       if (k2 !== ft.sentK || now - ft.sent > (my.f ? 400 : 1500)) { ft.sentK = k2; ft.sent = now; bcast({ t: 'fi', id: me.id, o: Math.round(my.off * 100) / 100, f: my.f ? 1 : 0, w: Math.round(my.tw * 10) / 10 }); }
       const gb = $('#ftGas'); if (gb) gb.style.setProperty('--g', my.gas.toFixed(2));
     }
     // 电脑（房主算）
-    if (role === 'host' && run) G.rings.forEach((r, k) => r.ids.forEach((id, i) => { if (isBot(id) && !ft.done[k]) { ftBot(G, k, id, i, el); if (ft.inp[id].f && Math.random() < dt * 8) ftPuff(k, ftSeats(G, k)[i]); } }));
+    if (role === 'host' && run) G.rings.forEach((r, k) => r.ids.forEach((id, i) => { if (isBot(id) && !ft.done[k] && !ft.rings[k].dead && !ft.rings[k].out) { ftBot(G, k, id, i, el, dt); if (ft.inp[id].f && Math.random() < dt * 8) ftPuff(k, ftSeats(G, k)[i]); } }));
     // 物理：大家都算（房主的算数，别人的会被房主的位置慢慢拉回去）
     if (run) {
       const steps = Math.ceil(dt / 0.017), h2 = dt / steps;
       for (let s = 0; s < steps; s++) G.rings.forEach((r, k) => {
-        if (ft.done[k]) { const ring = ft.rings[k]; ring.vx *= 0.9; ring.vy *= 0.9; return; }
+        const ring = ft.rings[k];
+        if (ft.done[k] || ring.out) { ring.vx *= 0.9; ring.vy *= 0.9; return; }
+        if (ring.dead > 0) { ring.dead -= h2; if (ring.dead <= 0) { if (role !== 'host') ring.dead = 0.02; else if (G.mode === 'coop' && ring.lives <= 0) { ring.dead = 0; ring.out = true; } else ftRespawn(ring); } return; }
         const hit = ftStep(ft.c, ft.rings[k], ftSeats(G, k), el, h2, ft.rings);
         if (hit && k === mk && now - ft.hitAt > 500) { ft.hitAt = now; if (hit === 2) { sfx.err(); fx.vib(120); fx.flash('rgba(255,80,80,.35)'); } else { sfx.hit(); fx.vib(40); } }
       });
       for (const r of ft.rings) if (r.cor) { const a = Math.min(1, dt * 6); for (const k of ['x', 'y', 'th']) { r[k] += r.cor[k] * a; r.cor[k] *= 1 - a; } }
     }
+    // 房主：判断死亡 / 吃辣椒
+    if (role === 'host' && run) G.rings.forEach((rg, k) => {
+      const r = ft.rings[k]; if (ft.done[k] || r.out || r.dead > 0) return;
+      r.cp = Math.max(r.cp || 0, ft.c.cps.filter(y => r.y < y).length);
+      const hz = ftHazard(ft.c, r, el, ft.gone); if (!hz) return;
+      if (hz.chili) { const ev = { t: 'fd', k, c: hz.chili }; bcast(ev); ftEvt(ev); return; }
+      if (r.inv > 0) return;
+      const ev = { t: 'fd', k, why: hz.why, key: hz.key, l: G.mode === 'coop' ? r.lives - 1 : 0 }; bcast(ev); ftEvt(ev);
+    });
     // 房主：广播泳圈 + 电脑的位置；看谁到终点
     if (role === 'host' && G.ph === 'run') {
-      if (now - ft.snap > 100) { ft.snap = now; bcast({ t: 'fs', e: Math.round(el * 1000), r: ft.rings.map(r => [r.x, r.y, r.vx, r.vy, r.th, r.om].map(v => Math.round(v * 100) / 100)), b: Object.fromEntries(G.rings.flatMap(r => r.ids).filter(isBot).map(id => [id, [Math.round(ft.inp[id].off * 100) / 100, ft.inp[id].f ? 1 : 0]])) }); }
+      if (now - ft.snap > 100) { ft.snap = now; bcast({ t: 'fs', e: Math.round(el * 1000), r: ft.rings.map(r => [r.x, r.y, r.vx, r.vy, r.th, r.om, r.dead, r.inv, r.lives, r.cp, r.buff, r.out ? 1 : 0].map(v => Math.round(v * 100) / 100)), g: [...ft.gone], b: Object.fromEntries(G.rings.flatMap(r => r.ids).filter(isBot).map(id => [id, [Math.round(ft.inp[id].off * 100) / 100, ft.inp[id].f ? 1 : 0]])) }); }
       if (run) G.rings.forEach((r, k) => { if (!ft.done[k] && ft.rings[k].y < -ft.c.L) { ft.done[k] = Math.round(el * 10) / 10; sfx.big(); } });
-      const timeUp = G.mode === 'coop' && el > ft.c.m.limit, all = G.rings.every((r, k) => ft.done[k]), first = G.mode === 'vs' && G.rings.some((r, k) => ft.done[k]);
+      const timeUp = false, all = G.rings.every((r, k) => ft.done[k] || ft.rings[k].out), first = G.mode === 'vs' && G.rings.some((r, k) => ft.done[k]);
       if (!ft.ended && (timeUp || all || first)) {
-        ft.ended = true; const times = G.rings.map((r, k) => ft.done[k] || null), prog = ft.rings.map(r => Math.round(clamp(-r.y / ft.c.L, 0, 1) * 100));
+        ft.ended = true; const lives = ft.rings.map(r => r.lives), times = G.rings.map((r, k) => ft.done[k] || null), prog = ft.rings.map(r => Math.round(clamp(-r.y / ft.c.L, 0, 1) * 100));
         setTimeout(() => save(st => {
           const g = st.g; if (st.game !== 'fart' || g.seed !== G.seed || g.ph !== 'run') return false;
-          g.ph = 'done'; g.times = times; g.prog = prog;
-          if (g.mode === 'coop') { g.clear = times.every(Boolean); if (g.clear) { g.best = Math.max(g.best || 0, g.map + 1); st.fartBest = Math.max(st.fartBest || 0, g.map + 1); if (g.ids.length > 1) awardTeam(st, g.rings.flatMap(r => r.ids), 2); } }
+          g.ph = 'done'; g.times = times; g.prog = prog; g.lives = lives;
+          if (g.mode === 'coop') { g.clear = times.some(Boolean); if (g.clear) { g.best = Math.max(g.best || 0, g.map + 1); st.fartBest = Math.max(st.fartBest || 0, g.map + 1); if (g.ids.length > 1) awardTeam(st, g.rings.flatMap(r => r.ids), 2); } }
           else { const w = times.findIndex(Boolean); g.win = w; if (w >= 0) awardTeam(st, g.rings[w].ids); }
-        }), all || first ? 1400 : 300);
+        }), 1400);
       }
     }
     ftDraw(G, el, mk);
+  }
+  function ftRespawn(r) { const y = r.cp ? ft.c.cps[r.cp - 1] : 0; Object.assign(r, { x: ft.c.cx(y), y, vx: 0, vy: 0, th: 0, om: 0, dead: 0, inv: 2.2, cor: null }); }
+  function ftEvt(ev) { // 死掉 / 吃辣椒（大家一起看）
+    const G = S && S.g, r = ft && ft.rings[ev.k]; if (!r || !G) return;
+    const mine = ftRingOf(G, me.id) === ev.k;
+    if (ev.c) { if (ft.gone.has(ev.c)) return; ft.gone.add(ev.c); r.buff = 4; ft.pops.push({ x: r.x, y: r.y - 70, t: 0, w: '🌶️ 辣椒屁 ×2！', big: 1 }); if (mine) { sfx.win(); fx.vib(60); } else sfx.pop(); return; }
+    if (r.dead > 0) return;
+    if (ev.key) ft.gone.add(ev.key);
+    r.dead = FT_DEAD; r.vx = r.vy = 0; if (G.mode === 'coop') r.lives = ev.l;
+    for (let i = 0; i < 26; i++) { const a = Math.random() * 6.28, v = 80 + Math.random() * 220; ft.puffs.push({ x: r.x, y: r.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: Math.random() * 0.3, s: 12 + Math.random() * 16, col: ev.why === 'zap' ? '#fff27a' : ev.why === 'mine' ? '#ff9a3c' : '#ffffff' }); }
+    ft.pops.push({ x: r.x, y: r.y - 80, t: 0, w: FT_WHY[ev.why] || '💥', big: 1 });
+    if (G.mode === 'coop') ft.pops.push({ x: r.x, y: r.y - 40, t: -0.3, w: ev.l > 0 ? `还剩 ${'❤️'.repeat(ev.l)}` : '💀 没命了', big: 1 });
+    if (mine) { ev.why === 'zap' ? sfx.shoot() : sfx.boom(); fx.shake('#ftcv'); fx.flash(ev.why === 'zap' ? 'rgba(255,240,120,.45)' : 'rgba(255,80,60,.45)'); fx.vib([200, 60, 200]); } else sfx.hit();
   }
   function ftPuff(k, s) { if (!s) return; const r = ft.rings[k], a = r.th + s.a; ft.puffs.push({ x: r.x + Math.cos(a) * FT.R * 1.25, y: r.y + Math.sin(a) * FT.R * 1.25, vx: Math.cos(a) * 140 + r.vx * 0.5, vy: Math.sin(a) * 140 + r.vy * 0.5, t: 0, s: 10 + Math.random() * 10 }); if (ft.puffs.length > 140) ft.puffs.shift(); }
   function ftDraw(G, el, mk) {
@@ -5616,33 +5669,55 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     ctx.save(); ctx.clip(); ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 2;
     for (let y = Math.floor(y0 / 90) * 90; y < y1; y += 90) for (let k = -3; k <= 3; k++) { const yy = y - ((t * c.m.cur * 2) % 90), xx = c.cx(yy) + k * 95 + ((y / 90) % 2) * 40; ctx.beginPath(); ctx.moveTo(X(xx - 18), Y(yy)); ctx.quadraticCurveTo(X(xx), Y(yy - 10), X(xx + 18), Y(yy)); ctx.stroke(); }
     ctx.restore();
+    // 急流
+    for (const rp of c.rapids) if (rp.y1 < y1 && rp.y0 > y0) { ctx.save(); ctx.beginPath(); for (let y = rp.y1; y <= rp.y0; y += 20) ctx.lineTo(X(c.cx(y) - c.hw(y)), Y(y)); for (let y = rp.y0; y >= rp.y1; y -= 20) ctx.lineTo(X(c.cx(y) + c.hw(y)), Y(y)); ctx.closePath(); ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fill(); ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; const off = (t * 160) % 60; for (let y = rp.y1 + off; y < rp.y0; y += 60) for (let k = -3; k <= 3; k++) { const xx = c.cx(y) + k * 80; ctx.beginPath(); ctx.moveTo(X(xx - 14), Y(y - 10)); ctx.lineTo(X(xx), Y(y + 4)); ctx.lineTo(X(xx + 14), Y(y - 10)); ctx.stroke(); }
+      ctx.restore(); const my2 = (rp.y0 + rp.y1) / 2; ctx.font = '800 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 3; ctx.strokeText('🌊 急流！大家一起放', X(c.cx(my2)), Y(rp.y1) - 8); ctx.fillText('🌊 急流！大家一起放', X(c.cx(my2)), Y(rp.y1) - 8); }
     // 刺墙
-    const edge = side => { ctx.beginPath(); for (let y = y0; y <= y1; y += step) ctx.lineTo(X(c.cx(y) + side * c.hw(y)), Y(y)); ctx.strokeStyle = c.m.spikes ? '#c0508e' : '#d8c89a'; ctx.lineWidth = c.m.spikes ? 14 : 8; ctx.stroke();
+    const edge = side => { ctx.beginPath(); for (let y = y0; y <= y1; y += step) ctx.lineTo(X(c.cx(y) + side * c.hw(y)), Y(y)); ctx.strokeStyle = c.m.spikes ? '#c0508e' : '#c9603f'; ctx.lineWidth = c.m.spikes ? 14 : 9; ctx.stroke();
       if (c.m.spikes) { ctx.fillStyle = '#fff4f8'; for (let y = Math.floor(y0 / 30) * 30; y <= y1; y += 30) { const ex = c.cx(y) + side * c.hw(y); ctx.beginPath(); ctx.moveTo(X(ex), Y(y - 8)); ctx.lineTo(X(ex - side * 18), Y(y)); ctx.lineTo(X(ex), Y(y + 8)); ctx.fill(); } } };
     edge(-1); edge(1);
     // 终点
     const fy = -c.L; if (fy > y0 && fy < y1) { const hw = c.hw(fy), cx = c.cx(fy); for (let i = 0; i < 16; i++) for (let j = 0; j < 2; j++) { ctx.fillStyle = (i + j) % 2 ? '#fff' : '#111'; ctx.fillRect(X(cx - hw + (i * hw * 2) / 16), Y(fy) + j * 10 * sc, (hw * 2 * sc) / 16 + 1, 10 * sc); } ctx.fillStyle = '#fff'; ctx.font = '900 20px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('🏁 终点', X(cx), Y(fy) - 14); }
     // 漩涡
-    for (const p of c.pools) if (p.y > y0 - p.r && p.y < y1 + p.r) { ctx.save(); ctx.translate(X(p.x), Y(p.y)); ctx.rotate(t * p.s * 2); for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.strokeStyle = `rgba(255,255,255,${0.5 - i * 0.1})`; ctx.lineWidth = 4; ctx.arc(0, 0, p.r * sc * (0.3 + i * 0.22), i, i + 4.2); ctx.stroke(); } ctx.restore(); }
+    for (const p of c.pools) if (p.y > y0 - p.r && p.y < y1 + p.r) { ctx.save(); ctx.translate(X(p.x), Y(p.y)); ctx.rotate(t * p.s * 2); for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.strokeStyle = `rgba(255,255,255,${0.5 - i * 0.1})`; ctx.lineWidth = 4; ctx.arc(0, 0, p.r * sc * (0.3 + i * 0.22), i, i + 4.2); ctx.stroke(); } ctx.fillStyle = 'rgba(10,30,60,.6)'; ctx.beginPath(); ctx.arc(0, 0, p.r * 0.24 * sc, 0, 7); ctx.fill(); ctx.restore(); }
     // 石头
     for (const o of c.rocks) if (o.y > y0 - 80 && o.y < y1 + 80) { ctx.fillStyle = '#6b6f76'; ctx.beginPath(); ctx.arc(X(o.x), Y(o.y), o.r * sc, 0, 7); ctx.fill(); ctx.fillStyle = '#8f949b'; ctx.beginPath(); ctx.arc(X(o.x) - o.r * sc * 0.25, Y(o.y) - o.r * sc * 0.25, o.r * sc * 0.55, 0, 7); ctx.fill(); }
+    // 检查点
+    c.cps.forEach((y, i) => { if (y < y0 || y > y1) return; const hw = c.hw(y), cx = c.cx(y); ctx.setLineDash([10, 8]); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(X(cx - hw), Y(y)); ctx.lineTo(X(cx + hw), Y(y)); ctx.stroke(); ctx.setLineDash([]); ctx.font = `${Math.round(30 * sc)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText('🚩', X(cx - hw + 20), Y(y)); ctx.fillText('🚩', X(cx + hw - 20), Y(y)); });
+    // 电门
+    for (const g of c.gates) if (g.y > y0 && g.y < y1) { const st = ftGate(g, t), hw = c.hw(g.y), cx = c.cx(g.y), xa = X(cx - hw), xb = X(cx + hw), yy = Y(g.y);
+      if (st === 2) { ctx.strokeStyle = '#fff27a'; ctx.lineWidth = 5; ctx.shadowColor = '#fff27a'; ctx.shadowBlur = 16; ctx.beginPath(); for (let x = xa, i = 0; x <= xb; x += 14, i++) ctx.lineTo(x, yy + (i % 2 ? -7 : 7) * Math.random() * 1.4); ctx.stroke(); ctx.shadowBlur = 0; }
+      else { ctx.strokeStyle = st === 1 && Math.floor(performance.now() / 120) % 2 ? 'rgba(255,90,70,.9)' : 'rgba(255,255,255,.25)'; ctx.lineWidth = 3; ctx.setLineDash([6, 10]); ctx.beginPath(); ctx.moveTo(xa, yy); ctx.lineTo(xb, yy); ctx.stroke(); ctx.setLineDash([]); }
+      ctx.fillStyle = '#444b55'; for (const xx of [xa, xb]) { ctx.beginPath(); ctx.arc(xx, yy, 13 * sc + 4, 0, 7); ctx.fill(); } ctx.font = `${Math.round(18 * sc + 6)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⚡', xa, yy); ctx.fillText('⚡', xb, yy); }
+    // 水雷 / 辣椒
+    const bob = Math.sin(performance.now() / 300) * 3;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const o of c.mines) if (!ft.gone.has(o.id) && o.y > y0 && o.y < y1) { ctx.fillStyle = 'rgba(255,60,60,.18)'; ctx.beginPath(); ctx.arc(X(o.x), Y(o.y), (o.r + 14) * sc, 0, 7); ctx.fill(); ctx.font = `${Math.round(o.r * 2.3 * sc)}px sans-serif`; ctx.fillText('💣', X(o.x), Y(o.y) + bob); }
+    for (const o of c.chili) if (!ft.gone.has(o.id) && o.y > y0 && o.y < y1) { ctx.fillStyle = 'rgba(255,200,60,.35)'; ctx.beginPath(); ctx.arc(X(o.x), Y(o.y), (o.r + 8 + bob) * sc, 0, 7); ctx.fill(); ctx.font = `${Math.round(o.r * 1.9 * sc)}px sans-serif`; ctx.fillText('🌶️', X(o.x), Y(o.y) - bob); }
+    // 鲨鱼
+    for (const sk of c.sharks) { const p = ftShark(c, sk, t); if (p.y < y0 - 60 || p.y > y1 + 60) continue; ctx.fillStyle = 'rgba(20,40,70,.35)'; ctx.beginPath(); ctx.ellipse(X(p.x), Y(p.y) + 8, 40 * sc, 16 * sc, 0, 0, 7); ctx.fill(); ctx.save(); ctx.translate(X(p.x), Y(p.y)); ctx.scale(-p.dir, 1); ctx.font = `${Math.round(60 * sc)}px sans-serif`; ctx.fillText('🦈', 0, 0); ctx.restore(); }
     // 木头 / 鳄鱼
     for (const l of c.logs) if (l.y > y0 && l.y < y1) { const lx = ftLogX(c, l, t); ctx.fillStyle = c.m.spikes ? '#4f8a3a' : '#8a5a2b'; ctx.beginPath(); ctx.roundRect(X(lx - l.len / 2), Y(l.y - 18), l.len * sc, 36 * sc, 18 * sc); ctx.fill(); if (c.m.spikes) { ctx.fillStyle = '#fff'; ctx.font = `${Math.round(26 * sc)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🐊', X(lx + l.len / 2 - 14), Y(l.y)); } }
     // 屁
     for (const p of ft.puffs) { p.t += 1 / 60; p.x += p.vx / 60; p.y += p.vy / 60; p.vx *= 0.95; p.vy *= 0.95; }
     ft.puffs = ft.puffs.filter(p => p.t < 1.1);
-    for (const p of ft.puffs) { ctx.globalAlpha = 0.55 * (1 - p.t); ctx.fillStyle = '#b8e04a'; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), (p.s + p.t * 26) * sc, 0, 7); ctx.fill(); }
+    for (const p of ft.puffs) { ctx.globalAlpha = 0.55 * (1 - p.t); ctx.fillStyle = p.col || '#b8e04a'; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), (p.s + p.t * 26) * sc, 0, 7); ctx.fill(); }
     ctx.globalAlpha = 1;
     // 泳圈 + 人
     G.rings.forEach((rg, k) => {
-      const r = ft.rings[k], px = X(r.x), py = Y(r.y), R = FT.R * sc, seats = ftSeats(G, k);
-      ctx.save(); ctx.translate(px, py); ctx.rotate(r.th);
+      const r = ft.rings[k], px = X(r.x), py = Y(r.y), seats = ftSeats(G, k);
+      if (r.out) { ctx.font = '800 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.fillText('💀 出局', px, py); return; }
+      const sink = r.dead > 0 ? Math.max(0.15, r.dead / FT_DEAD) : 1, R = FT.R * sc * sink;
+      ctx.save(); ctx.globalAlpha = r.inv > 0 && Math.floor(performance.now() / 110) % 2 ? 0.35 : sink;
+      if (r.buff > 0) { ctx.fillStyle = `rgba(255,140,40,${0.25 + 0.15 * Math.sin(performance.now() / 80)})`; ctx.beginPath(); ctx.arc(px, py, R * 1.55, 0, 7); ctx.fill(); }
+      ctx.save(); ctx.translate(px, py); ctx.rotate(r.th + (r.dead > 0 ? (FT_DEAD - r.dead) * 6 : 0));
       ctx.lineWidth = R * 0.42; ctx.strokeStyle = G.mode === 'vs' ? TEAMCOL[k] : '#ff8a3c'; ctx.beginPath(); ctx.arc(0, 0, R * 0.8, 0, 7); ctx.stroke();
       ctx.strokeStyle = '#fff'; for (let i = 0; i < 8; i++) { ctx.beginPath(); ctx.arc(0, 0, R * 0.8, (i / 8) * 6.283, (i / 8) * 6.283 + 0.3); ctx.stroke(); }
       ctx.restore();
       for (const s of seats) {
         const a = r.th + s.a, sx = px + Math.cos(a) * R * 0.8, sy = py + Math.sin(a) * R * 0.8, mine = s.id === me.id, rr = R * (mine ? 0.34 : 0.3);
-        if (s.f) { ctx.fillStyle = '#b8e04a'; ctx.beginPath(); ctx.arc(sx + Math.cos(a) * rr * 1.6, sy + Math.sin(a) * rr * 1.6, rr * (0.8 + Math.random() * 0.5), 0, 7); ctx.fill(); }
+        if (s.f) { ctx.fillStyle = r.buff > 0 ? '#ff9a3c' : '#b8e04a'; ctx.beginPath(); ctx.arc(sx + Math.cos(a) * rr * 1.6, sy + Math.sin(a) * rr * 1.6, rr * (0.8 + Math.random() * 0.5), 0, 7); ctx.fill(); }
         ctx.fillStyle = pcolor(s.id); ctx.beginPath(); ctx.arc(sx, sy, rr * 1.12, 0, 7); ctx.fill();
         ctx.lineWidth = mine ? 3 : 1.5; ctx.strokeStyle = mine ? '#fff' : 'rgba(0,0,0,.45)'; ctx.stroke();
         const wob = s.f ? Math.sin(performance.now() / 40) * 0.12 : 0;
@@ -5653,32 +5728,35 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
           ctx.strokeStyle = 'rgba(246,226,168,.85)'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr); ctx.lineTo(sx + Math.cos(a) * rr * 3.2, sy + Math.sin(a) * rr * 3.2); ctx.stroke(); ctx.setLineDash([]);
         }
       }
+      ctx.restore();
       if (ft.done[k]) { ctx.fillStyle = '#fff'; ctx.font = '800 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('到了！', px, py - R - 10); }
     });
     // 上面：时间 + 进度
     ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '800 14px sans-serif'; ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
-    const tt = G.mode === 'coop' ? `⏱ ${Math.max(0, Math.ceil(c.m.limit - t))} 秒` : `⏱ ${t.toFixed(1)}`;
+    const tt = `⏱ ${t.toFixed(1)}`;
     ctx.strokeText(tt, 10, 10); ctx.fillText(tt, 10, 10);
+    { const rr2 = ft.rings[Math.max(0, mk)]; if (rr2.nf >= 2) { ctx.textAlign = 'center'; ctx.font = `900 ${18 + rr2.nf * 3}px sans-serif`; ctx.fillStyle = rr2.nf >= 3 ? '#ffb13c' : '#d8f56a'; const tx3 = `💨×${rr2.nf} 合力！`; ctx.strokeText(tx3, W / 2, 14); ctx.fillText(tx3, W / 2, 14); ctx.textAlign = 'left'; ctx.font = '800 14px sans-serif'; ctx.fillStyle = '#fff'; } }
+    if (G.mode === 'coop') { const lv = ft.rings[Math.max(0, mk)].lives; ctx.font = '16px sans-serif'; ctx.fillText('❤️'.repeat(Math.max(0, lv)) + '🖤'.repeat(Math.max(0, FT_LIVES - lv)), 10, 30); }
     const bw = Math.min(160, W * 0.4); ft.rings.forEach((r, k) => { const p = clamp(-r.y / c.L, 0, 1), yy = 12 + k * 12; ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(W - bw - 10, yy, bw, 8); ctx.fillStyle = G.mode === 'vs' ? TEAMCOL[k] : '#ff8a3c'; ctx.fillRect(W - bw - 10, yy, bw * p, 8); if (k === mk) { ctx.strokeStyle = '#f6e2a8'; ctx.lineWidth = 1.5; ctx.strokeRect(W - bw - 10, yy, bw, 8); } });
     if (el < 0) { ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 84px sans-serif'; ctx.fillStyle = '#f6e2a8'; ctx.lineWidth = 6; const n = Math.max(1, Math.ceil(-el)); ctx.strokeText(n, W / 2, H * 0.35); ctx.fillText(n, W / 2, H * 0.35);
-      const tips = ['按住 💨 = 放屁', '屁往外喷，泳圈往反方向走', '◀ ▶ 在自己那格移动，背对终点才放'], ty0 = H * 0.35 + 62; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.roundRect(W / 2 - 150, ty0 - 16, 300, tips.length * 22 + 12, 12); ctx.fill(); ctx.font = '700 14px sans-serif'; ctx.fillStyle = '#fff'; tips.forEach((tp, i) => ctx.fillText(tp, W / 2, ty0 + i * 22)); }
+      const tips = ['按住 💨 = 放屁，泳圈往反方向走', '◀ ▶ 在自己那格移动，背对终点才放', '碰到岸边 💣🐊🦈⚡ 会死！急流要一起放'], ty0 = H * 0.35 + 62; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.roundRect(W / 2 - 160, ty0 - 16, 320, tips.length * 22 + 12, 12); ctx.fill(); ctx.font = '700 14px sans-serif'; ctx.fillStyle = '#fff'; tips.forEach((tp, i) => ctx.fillText(tp, W / 2, ty0 + i * 22)); }
     // 噗！字
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const p of ft.pops) { p.t += 1 / 60; ctx.globalAlpha = Math.max(0, 1 - p.t); ctx.font = `900 ${Math.round(18 + p.t * 10)}px sans-serif`; ctx.lineWidth = 4; ctx.strokeStyle = '#2b3d10'; ctx.strokeText(p.w, X(p.x), Y(p.y) - p.t * 30); ctx.fillStyle = '#d8f56a'; ctx.fillText(p.w, X(p.x), Y(p.y) - p.t * 30); } ctx.globalAlpha = 1; ft.pops = ft.pops.filter(p => p.t < 1);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const p of ft.pops) { p.t += 1 / 60; if (p.t < 0) continue; const life = p.big ? 1.8 : 1; ctx.globalAlpha = Math.max(0, Math.min(1, (life - p.t) * 2)); ctx.font = `900 ${Math.round((p.big ? 22 : 18) + Math.min(p.t, 0.4) * 12)}px sans-serif`; ctx.lineWidth = 4; ctx.strokeStyle = '#2b3d10'; ctx.strokeText(p.w, X(p.x), Y(p.y) - p.t * 30); ctx.fillStyle = p.big ? '#fff' : '#d8f56a'; ctx.fillText(p.w, X(p.x), Y(p.y) - p.t * 30); } ctx.globalAlpha = 1; ft.pops = ft.pops.filter(p => p.t < (p.big ? 1.8 : 1));
   }
   GAMES.fart = {
-    icon: '💨', name: '屁屁泳圈', sub: '大家放屁推同一个泳圈', how: '大家坐在同一个游泳圈上。按住 💨 放屁，屁往外喷，泳圈就往反方向走：后面的人放会往前，前面的人放会往后，左右一起放会抵消。左右键可以在自己那一格里面移动。合作一关一关过；或者分两队比赛谁先到终点。', tags: ['合作', '动作', '派对'], color: '#8ab83a', min: 1, max: 12, chips: false, full: true, fresh: true,
+    icon: '💨', name: '屁屁泳圈', sub: '大家放屁推同一个泳圈', how: '大家坐在同一个游泳圈上。按住 💨 放屁，屁往外喷，泳圈就往反方向走：后面的人放会往前，前面的人放会往后，左右一起放会抵消。左右键可以在自己那一格里面移动。合作模式有 3 条命，6 关一关比一关多机关（水雷、鳄鱼、漩涡、电门、鲨鱼、刺墙）；或者分两队比赛谁先到终点。', tags: ['合作', '动作', '派对'], color: '#8ab83a', min: 1, max: 12, chips: false, full: true, fresh: true,
     defaults: { mode: 'coop', map: 0 },
     settings(V) {
       const o = gopt(V, 'fart');
       return `<label>玩法</label><div class="seg"><button class="${o.mode !== 'vs' ? 'on' : ''}" data-opt="fart:mode:coop">🤝 合作闯关</button><button class="${o.mode === 'vs' ? 'on' : ''}" data-opt="fart:mode:vs">⚔️ 两队比赛</button></div>
         <label>${o.mode === 'vs' ? '地图' : '从哪一关开始'}</label><div class="seg wrap">${FT_MAPS.map((m, i) => `<button class="${(o.map || 0) === i ? 'on' : ''}" data-opt="fart:map:${i}" ${o.mode !== 'vs' && i > (V.fartBest || 0) ? 'disabled' : ''}>${m.icon} ${i + 1}. ${m.name}</button>`).join('')}</div>
-        <p class="hint">${o.mode === 'vs' ? '两个泳圈一起跑，可以互撞，先到终点那队赢。' : `每个泳圈最多 6 个人，人不够电脑补到 4 个。过一关开下一关。${V.fartBest ? `你们已经过到第 ${V.fartBest} 关` : ''}`}</p>`;
+        <p class="hint">${o.mode === 'vs' ? '两个泳圈一起跑，可以互撞，先到终点那队赢。死了回到上一个 🚩 再来。' : `2 个人就可以玩（1 个人电脑陪你）。泳圈有 3 条命 ❤️❤️❤️：一个人放屁很弱，几个人同时放才有力（急流、漩涡一定要合力）。碰到岸边、💣水雷 🐊鳄鱼 🦈鲨鱼 ⚡电门 🌀漩涡中心 🌵刺墙 会死，回到上一个 🚩。吃 🌶️ 辣椒 4 秒屁力加倍、屁不会用完。${V.fartBest ? `你们已经过到第 ${V.fartBest} 关` : ''}`}</p>`;
     },
     start(st, ids) {
       const o = gopt(st, 'fart'), mode = o.mode === 'vs' && ids.length > 1 ? 'vs' : 'coop', hs = shuffle(ids.filter(id => !isBot(id))), bs = ids.filter(isBot);
       const nR = mode === 'vs' ? 2 : Math.max(1, Math.ceil(hs.length / 6)), rings = Array.from({ length: nR }, () => ({ ids: [] }));
       hs.forEach((id, i) => rings[i % nR].ids.push(id)); bs.forEach(id => { const r = rings.slice().sort((a, b) => a.ids.length - b.ids.length)[0]; if (r.ids.length < 6) r.ids.push(id); });
-      let k = 0; const minN = mode === 'vs' ? Math.max(3, ...rings.map(r => r.ids.length)) : 4;
+      let k = 0; const minN = mode === 'vs' ? Math.max(...rings.map(r => r.ids.length)) : 2; // 最少 2 个人就可以玩；比赛时人少那队电脑补齐
       for (const r of rings) while (r.ids.length < Math.min(6, minN)) { const id = 'bot' + Math.random().toString(36).slice(2, 9); r.ids.push(id); st.players.push({ id, name: '电脑 ' + (++k + bs.length), chips: st.startChips || 100, bot: true }); }
       const map = clamp(+(o.map || 0), 0, mode === 'vs' ? FT_MAPS.length - 1 : Math.min(FT_MAPS.length - 1, st.fartBest || 0));
       return { mode, map, rings, ids: rings.flatMap(r => r.ids), seed: Math.floor(Math.random() * 1e9), ph: 'run', times: null, best: st.fartBest || 0 };
@@ -5687,9 +5765,14 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     stop: ftStop,
     onMsg(m) {
       if (!ft) return;
+      if (m.t === 'fd' && role !== 'host') ftEvt(m);
       if (m.t === 'fi' && m.id !== me.id && ft.inp[m.id]) Object.assign(ft.inp[m.id], { off: m.o, f: !!m.f, tw: m.w || 0 });
       if (m.t === 'fs' && role !== 'host') {
-        m.r.forEach((v, k) => { const r = ft.rings[k]; if (!r) return; const lag = 0.06; r.cor = { x: v[0] + v[2] * lag - r.x, y: v[1] + v[3] * lag - r.y, th: v[4] + v[5] * lag - r.th }; if (Math.hypot(r.cor.x, r.cor.y) > 160) { r.x += r.cor.x; r.y += r.cor.y; r.cor.x = r.cor.y = 0; } r.vx = v[2]; r.vy = v[3]; r.om = v[5]; });
+        if (m.g) m.g.forEach(id => ft.gone.add(id));
+        m.r.forEach((v, k) => { const r = ft.rings[k]; if (!r) return; const lag = 0.06;
+          const wasDead = r.dead > 0; r.inv = v[7]; r.lives = v[8]; r.cp = v[9]; r.buff = v[10]; r.out = !!v[11];
+          if (v[6] > 0) { if (!wasDead) r.dead = v[6]; r.cor = null; return; }
+          if (wasDead) { Object.assign(r, { dead: 0, x: v[0], y: v[1], vx: v[2], vy: v[3], th: v[4], om: v[5], cor: null }); return; } r.cor = { x: v[0] + v[2] * lag - r.x, y: v[1] + v[3] * lag - r.y, th: v[4] + v[5] * lag - r.th }; if (Math.hypot(r.cor.x, r.cor.y) > 160) { r.x += r.cor.x; r.y += r.cor.y; r.cor.x = r.cor.y = 0; } r.vx = v[2]; r.vy = v[3]; r.om = v[5]; });
         for (const [id, [o, f]] of Object.entries(m.b || {})) if (ft.inp[id]) { ft.inp[id].off = o; if (f && !ft.inp[id].f) sfx.fart(0.5); ft.inp[id].f = !!f; }
       }
     },
@@ -5698,7 +5781,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       let end = '';
       if (done) {
         const m = FT_MAPS[g.map], isHost = role === 'host';
-        if (g.mode === 'coop') end = `<div class="endcard"><h3>${g.clear ? `🎉 第 ${g.map + 1} 关「${m.name}」过了！` : '⏰ 时间到，没有到终点'}</h3><div class="sub">${g.clear ? g.times.map((t, k) => `泳圈 ${k + 1}：${t} 秒`).join('　') : `走到 ${Math.max(...(g.prog || [0]))}%`}</div>
+        if (g.mode === 'coop') end = `<div class="endcard"><h3>${g.clear ? `🎉 第 ${g.map + 1} 关「${m.name}」过了！` : '💀 命都没了，没有到终点'}</h3><div class="sub">${g.clear ? g.times.filter(Boolean).map(t => `${t} 秒`).join('　') + `　剩 ${'❤️'.repeat(Math.max(0, ...(g.lives || [0])))}` : `最远走到 ${Math.max(...(g.prog || [0]))}%`}</div>
           ${g.rings.map((r, k) => `<div class="erow"><span class="rk">${k + 1}</span><span>${r.ids.map(id => esc(pname(id))).join('、')}</span><b>${g.times[k] ? g.times[k] + ' 秒' : (g.prog || [])[k] + '%'}</b></div>`).join('')}
           <div style="flex:1"></div>${isHost ? `${g.clear && g.map < FT_MAPS.length - 1 ? `<button class="btn gold big" id="ftNext">下一关：${FT_MAPS[g.map + 1].icon} ${FT_MAPS[g.map + 1].name}</button><button class="btn" id="ftAgain">再玩这一关</button>` : `<button class="btn gold big" id="ftAgain">${g.clear ? '全部通关！再来' : '再试一次'}</button>`}<button class="btn" id="ftLobby">回大厅</button>` : '<div class="wait">等房主</div>'}</div>`;
         else end = `<div class="endcard"><h3>${g.win >= 0 ? (g.win ? '🔵 蓝队' : '🔴 红队') + '先到终点！' : '平手'}</h3><div class="sub">${FT_MAPS[g.map].icon} ${FT_MAPS[g.map].name}</div>
