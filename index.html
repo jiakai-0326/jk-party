@@ -889,6 +889,15 @@ b.win{color:#4ad66d}b.lose{color:#ff6b6b}
 @media (orientation:landscape) and (max-height:560px){ .stage>.cv~.sl-pad .sl-b{flex:0 0 130px;height:130px;min-height:0;border-radius:50%;background:rgba(29,11,46,.55)} }
 @media (orientation:landscape) and (max-height:560px){ #app.full:has(.stage>.cv){max-width:none} }
 
+/* 天台大乱斗 / 篮球 共用按钮 */
+.br-pad{display:flex;justify-content:space-between;gap:10px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#161023;touch-action:none;user-select:none;-webkit-user-select:none}
+.br-l,.br-r{display:flex;gap:8px}
+.br-b{width:74px;height:74px;border:0;border-radius:18px;background:#2b2540;color:#fff;font-size:28px;display:flex;flex-direction:column;align-items:center;justify-content:center;touch-action:none;-webkit-tap-highlight-color:transparent}
+.br-b small{font-size:11px;font-weight:800}.br-b.on{transform:scale(.93);filter:brightness(1.3)}
+.br-b.jump{background:#2a6f97}.br-b.hit{background:#c9184a}.br-b.shoot{background:#e76f51}
+@media (orientation:landscape) and (max-height:560px){ .stage>.cv~.br-pad{position:absolute;left:0;right:0;bottom:0;background:transparent;pointer-events:none;padding:10px 16px} .stage>.cv~.br-pad>*{pointer-events:auto} .stage>.cv~.br-pad .br-b{opacity:.82;width:84px;height:84px;border-radius:50%} }
+.kbpow{display:none}
+
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
@@ -7431,6 +7440,290 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     },
   };
 
+  // ═════════ 天台大乱斗（跳 + 打）═════════
+  // 城市天台上跳来跳去互打。被打越多（%越高）就飞越远，掉下天台扣一条命。最后还有命的赢。
+  // 网络：每人自己算自己的身体；打中别人时送「击中」给对方，对方自己飞出去（被打的人说了算）。电脑由房主算。
+  const BR = { G: 2300, SPD: 360, JMP: 860, JMP2: 760, W: 1600, DEAD: 1150, LIVES: 3, PCD: 0.32, REACH: 62, PW: 26, PH: 56, INV: 2 };
+  const BR_PLAT = [[-40, 340, 640, 1], [380, 260, 540, 1], [720, 230, 660, 1], [1010, 280, 580, 1], [1360, 290, 620, 1], [170, 150, 450, 0], [560, 170, 400, 0], [890, 150, 470, 0], [1190, 170, 410, 0], [760, 120, 290, 0]];
+  let br = null;
+  function brStop() { if (br) { cancelAnimationFrame(br.raf); window.removeEventListener('keydown', br.kd); window.removeEventListener('keyup', br.ku); br = null; } }
+  const brSpawn = i => ({ x: 200 + ((i * 337) % 1200), y: 150, vx: 0, vy: 0, face: 1, air: 0, jumps: 0, dmg: 0, inv: BR.INV, punch: 0, pcd: 0, gun: 0, kx: 0 });
+  function brSetup(V) {
+    const g = V.g, key = V.gid + ':' + g.seed; if (br && br.key === key) return br; brStop();
+    br = { key, canvas: document.createElement('canvas'), me: brSpawn(g.ids.indexOf(me.id)), pos: {}, bots: {}, bul: [], crates: {}, keys: {}, last: performance.now(), sent: 0, hitBy: null, fx: [], nextCrate: 9 };
+    g.ids.forEach((id, i) => { br.pos[id] = brSpawn(i); if (isBot(id)) br.bots[id] = { ...brSpawn(i), think: 0, tgt: null }; });
+    br.kd = e => { br.keys[e.key] = 1; if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') { br.jumpQ = 1; e.preventDefault(); } if (e.key === 'j' || e.key === 'f') br.hitQ = 1; };
+    br.ku = e => { delete br.keys[e.key]; };
+    window.addEventListener('keydown', br.kd); window.addEventListener('keyup', br.ku);
+    const loop = () => { if (!br || br.key !== key) return; brFrame(); br.raf = requestAnimationFrame(loop); }; br.raf = requestAnimationFrame(loop);
+    return br;
+  }
+  function brPhys(p, dir, jump, dt) { // 一个人走一步：走路、跳、重力、站在天台上
+    const ctrl = p.kx > 0 ? 0.25 : 1; p.kx = Math.max(0, p.kx - dt);
+    const tv = dir * BR.SPD; p.vx += (tv - p.vx) * Math.min(1, dt * (p.air ? 6 : 14) * ctrl);
+    if (jump && p.jumps < 2) { p.vy = -(p.jumps ? BR.JMP2 : BR.JMP); p.jumps++; p.air = 1; }
+    const oy = p.y; p.vy += BR.G * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.air = 1;
+    if (p.vy >= 0) for (const [x, w, top] of BR_PLAT) if (p.x > x - 6 && p.x < x + w + 6 && oy <= top + 1 && p.y >= top) { p.y = top; p.vy = 0; p.air = 0; p.jumps = 0; break; }
+    if (dir) p.face = dir;
+    p.inv = Math.max(0, p.inv - dt); p.punch = Math.max(0, p.punch - dt); p.pcd = Math.max(0, p.pcd - dt);
+  }
+  const brOut = p => p.y > BR.DEAD || p.x < -380 || p.x > BR.W + 380 || p.y < -900;
+  function brKnock(p, from, dmg, kb) { if (p.inv > 0) return; p.dmg += dmg; const k = (kb || 260) + p.dmg * 7.5; p.vx = from * k; p.vy = -(220 + p.dmg * 4.2); p.kx = 0.25 + p.dmg / 300; p.air = 1; }
+  function brAttack(att, G, isBotAtt, by) { // 拳头 / 子弹：找前面的人
+    const res = []; for (const id of G.ids) { if (id === by || !(G.lives[id] > 0)) continue; const t = id === me.id ? br.me : br.bots[id] || br.pos[id]; if (!t) continue; const dx = (t.x - att.x) * att.face, dy = Math.abs(t.y - att.y); if (dx > -8 && dx < BR.REACH && dy < 46) res.push(id); } return res;
+  }
+  function brHitSend(to, from, dmg, kb) { if (to === me.id) { brKnock(br.me, from, dmg, kb); br.hitBy = null; return; } if (br.bots[to] && role === 'host') { brKnock(br.bots[to], from, dmg, kb); return; } bcast({ t: 'bh', to, f: from, d: dmg, k: kb, by: me.id }); }
+  function brFrame() {
+    const G = S && S.phase === 'play' && S.game === 'brawl' && S.g; if (!G || !br) return;
+    const now = performance.now(), dt = Math.min(0.033, (now - br.last) / 1000); br.last = now;
+    const el = fx.t('brawl:' + G.seed) / 1000 - 3.2, inG = G.ids.includes(me.id), alive = inG && G.lives[me.id] > 0, m = br.me, run = el >= 0 && G.ph === 'play';
+    if (alive && run) {
+      const kd = br.keys, dir = (kd.ArrowRight || kd.d || br.dir > 0 ? 1 : 0) - (kd.ArrowLeft || kd.a || br.dir < 0 ? 1 : 0);
+      brPhys(m, dir, br.jumpQ, dt); if (br.jumpQ) sfx.tap(); br.jumpQ = 0;
+      if (br.hitQ && !m.pcd) { m.pcd = BR.PCD; m.punch = 0.16; br.hitQ = 0; if (m.gun > 0) { m.gun--; const b = { x: m.x + m.face * 20, y: m.y - 32, vx: m.face * 1300, by: me.id, t: 0 }; br.bul.push(b); bcast({ t: 'bb', x: Math.round(b.x), y: Math.round(b.y), vx: b.vx, by: me.id }); sfx.shoot(); } else { const hits = brAttack(m, G, false, me.id); hits.forEach(id => brHitSend(id, m.face, 9, 240)); if (hits.length) { sfx.hit(); fx.vib(25); br.fx.push({ x: m.x + m.face * 40, y: m.y - 30, t: 0 }); } else sfx.whoosh(); } bcast({ t: 'bp', id: me.id }); } br.hitQ = 0;
+      // 捡箱子
+      for (const [cid, c] of Object.entries(br.crates)) if (!c.taken && Math.abs(c.x - m.x) < 34 && Math.abs(c.y - m.y) < 50) { c.taken = 1; if (role === 'host') brPick(cid, me.id); else bcast({ t: 'bk', c: cid, by: me.id }); }
+      if (brOut(m)) { sfx.die(); fx.vib(300); const by = m.lastBy; Object.assign(m, brSpawn(Math.floor(Math.random() * 6)), { x: 800, y: -100 }); save(st => { const g = st.g; if (g.ph !== 'play' || !(g.lives[me.id] > 0)) return false; g.lives[me.id]--; if (by && by !== me.id) g.ko[by] = (g.ko[by] || 0) + 1; brEnd(st); }); }
+      if (now - br.sent > 60) { br.sent = now; bcast({ t: 'bm', id: me.id, x: Math.round(m.x), y: Math.round(m.y), f: m.face, d: Math.round(m.dmg), p: m.punch > 0 ? 1 : 0, a: m.air, g: m.gun, i: m.inv > 0 ? 1 : 0 }); }
+    }
+    // 子弹
+    for (const b of br.bul) { b.x += b.vx * dt; b.t += dt; if (b.by === me.id || (role === 'host' && br.bots[b.by])) for (const id of G.ids) { if (id === b.by || !(G.lives[id] > 0)) continue; const t = id === me.id ? m : br.bots[id] || br.pos[id]; if (t && Math.abs(t.x - b.x) < 20 && b.y > t.y - BR.PH && b.y < t.y) { b.t = 9; const att = br.bots[b.by] || m; if (br.bots[b.by]) { if (id === me.id) brKnock(m, Math.sign(b.vx), 6, 200); else if (br.bots[id]) brKnock(br.bots[id], Math.sign(b.vx), 6, 200); else bcast({ t: 'bh', to: id, f: Math.sign(b.vx), d: 6, k: 200, by: b.by }); } else brHitSend(id, Math.sign(b.vx), 6, 200); sfx.hit(); break; } } }
+    br.bul = br.bul.filter(b => b.t < 1.4);
+    if (role === 'host' && run) brBots(G, dt, now, el);
+    brDraw(G, el);
+  }
+  function brPick(cid, by) { const c = br.crates[cid]; if (!c || c.won) return; c.won = by; c.taken = 1; bcast({ t: 'bw', c: cid, by, k: c.k }); brGive(by, c.k); }
+  function brGive(by, k) { const p = by === me.id ? br.me : br.bots[by]; if (!p) return; if (k === 'gun') { p.gun = 6; } else if (k === 'heal') p.dmg = Math.max(0, p.dmg - 40); else if (k === 'boot') { p.inv = 4; } if (by === me.id) { sfx.ok(); fx.toast(k === 'gun' ? '🔫 拿到枪！按「打」开枪（6 发）' : k === 'heal' ? '❤️ 伤害 -40%' : '⭐ 无敌 4 秒'); } }
+  function brBots(G, dt, now, el) {
+    for (const [id, b] of Object.entries(br.bots)) {
+      if (!(G.lives[id] > 0)) continue;
+      b.think -= dt; if (b.think <= 0) { b.think = 0.3 + Math.random() * 0.3; const live = G.ids.filter(o => o !== id && G.lives[o] > 0); b.tgt = live.map(o => [o, o === me.id ? br.me : br.bots[o] || br.pos[o]]).filter(([, p]) => p).sort((x, y) => Math.abs(x[1].x - b.x) - Math.abs(y[1].x - b.x))[0]; }
+      let dir = 0, jump = 0; const t = b.tgt && b.tgt[1];
+      if (t) { const dx = t.x - b.x; dir = Math.abs(dx) > 40 ? Math.sign(dx) : 0; if (t.y < b.y - 60 && !b.air && Math.random() < 0.08) jump = 1; if (Math.abs(dx) < 50 && Math.abs(t.y - b.y) < 40 && !b.pcd && Math.random() < 0.25) { b.face = Math.sign(dx) || b.face; b.pcd = BR.PCD * 1.4; b.punch = 0.16; brAttack(b, G, true, id).forEach(v => { if (v === me.id) { brKnock(br.me, b.face, 9, 240); br.me.lastBy = id; } else if (br.bots[v]) { brKnock(br.bots[v], b.face, 9, 240); br.bots[v].lastBy = id; } else bcast({ t: 'bh', to: v, f: b.face, d: 9, k: 240, by: id }); }); bcast({ t: 'bp', id }); } }
+      // 前面没地板就跳
+      if (!b.air && dir) { const ahead = b.x + dir * 60; if (!BR_PLAT.some(([x, w, top]) => ahead > x && ahead < x + w && top >= b.y - 5 && top < b.y + 200)) jump = 1; }
+      if (b.x < 120) dir = 1; if (b.x > BR.W - 120) dir = -1;
+      if (b.air && b.vy > 300 && b.jumps < 2 && b.y > 600) jump = 1;
+      brPhys(b, dir, jump, dt);
+      if (brOut(b)) { const by = b.lastBy; Object.assign(b, brSpawn(3), { x: 800, y: -100 }); save(st => { const g = st.g; if (g.ph !== 'play' || !(g.lives[id] > 0)) return false; g.lives[id]--; if (by) g.ko[by] = (g.ko[by] || 0) + 1; brEnd(st); }); }
+      br.pos[id] = b;
+      if (!b.sent || now - b.sent > 80) { b.sent = now; bcast({ t: 'bm', id, x: Math.round(b.x), y: Math.round(b.y), f: b.face, d: Math.round(b.dmg), p: b.punch > 0 ? 1 : 0, a: b.air, g: b.gun, i: b.inv > 0 ? 1 : 0 }); }
+    }
+    // 箱子从天上掉
+    if (el > br.nextCrate) { br.nextCrate = el + 7 + Math.random() * 5; const p = kt.pick(BR_PLAT), cid = 'c' + Math.floor(el * 10), k = kt.pick(['gun', 'gun', 'heal', 'boot']); const c = { x: p[0] + 30 + Math.random() * (p[1] - 60), y: p[2], k }; br.crates[cid] = c; bcast({ t: 'bc', c: cid, x: Math.round(c.x), y: c.y, k }); }
+    for (const [cid, c] of Object.entries(br.crates)) if (!c.taken) for (const [id, b] of Object.entries(br.bots)) if (G.lives[id] > 0 && Math.abs(c.x - b.x) < 34 && Math.abs(c.y - b.y) < 50) brPick(cid, id);
+  }
+  function brEnd(st) { const g = st.g, live = g.ids.filter(id => g.lives[id] > 0); if (live.length > 1 || g.ids.length < 2 && live.length) return; g.ph = 'over'; g.win = live[0] || null; const rk = g.ids.slice().sort((a, b) => (g.lives[b] || 0) - (g.lives[a] || 0) || (g.ko[b] || 0) - (g.ko[a] || 0)); g.rank = rk; award(st, rk); }
+  function brDraw(G, el) {
+    const cv = br.canvas, ctx = cv.getContext('2d'), W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1); if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); } ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 镜头：包住全部活着的人
+    const ps = G.ids.filter(id => G.lives[id] > 0).map(id => (id === me.id ? br.me : br.pos[id])).filter(Boolean);
+    let x0 = Math.min(...ps.map(p => p.x)) - 220, x1 = Math.max(...ps.map(p => p.x)) + 220, y0 = Math.min(...ps.map(p => p.y)) - 260, y1 = Math.max(...ps.map(p => p.y)) + 200; if (x1 - x0 < 760) { const c = (x0 + x1) / 2; x0 = c - 380; x1 = c + 380; } if (y1 - y0 < 520) { const c = (y0 + y1) / 2; y0 = c - 260; y1 = c + 260; }
+    const sc = Math.min(W / (x1 - x0), H / (y1 - y0), 1.3), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    br.cam = br.cam || { sc, cx, cy }; br.cam.sc += (sc - br.cam.sc) * 0.08; br.cam.cx += (cx - br.cam.cx) * 0.08; br.cam.cy += (cy - br.cam.cy) * 0.08;
+    const S2 = br.cam.sc, X = x => W / 2 + (x - br.cam.cx) * S2, Y = y => H / 2 + (y - br.cam.cy) * S2;
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#1b1036'); sky.addColorStop(0.6, '#e2725b'); sky.addColorStop(1, '#2a1a2e'); ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    // 远处的楼
+    ctx.fillStyle = 'rgba(30,20,50,.75)'; for (let i = 0; i < 24; i++) { const bx = -400 + i * 110, bh = 260 + ((i * 97) % 300); ctx.fillRect(W / 2 + (bx - br.cam.cx) * S2 * 0.5, H / 2 + (900 - bh - br.cam.cy) * S2 * 0.5, 90 * S2 * 0.5, bh * S2); }
+    // 天台
+    for (const [x, w, top, big] of BR_PLAT) { if (big) { ctx.fillStyle = '#2b2d42'; ctx.fillRect(X(x), Y(top), w * S2, (1300 - top) * S2); ctx.fillStyle = '#ffd166'; for (let wx = x + 20; wx < x + w - 20; wx += 46) for (let wy = top + 40; wy < 1200; wy += 60) if (((wx * 7 + wy * 3) | 0) % 5) ctx.fillRect(X(wx), Y(wy), 18 * S2, 24 * S2); ctx.fillStyle = '#8d99ae'; ctx.fillRect(X(x) - 4, Y(top) - 6 * S2, w * S2 + 8, 10 * S2); } else { ctx.fillStyle = '#6c757d'; ctx.fillRect(X(x), Y(top), w * S2, 14 * S2); ctx.fillStyle = '#495057'; ctx.fillRect(X(x + 10), Y(top + 14), 6 * S2, 120 * S2); ctx.fillRect(X(x + w - 16), Y(top + 14), 6 * S2, 120 * S2); } }
+    // 箱子
+    for (const c of Object.values(br.crates)) if (!c.taken) { ctx.fillStyle = '#b07d3a'; ctx.fillRect(X(c.x - 18), Y(c.y - 36), 36 * S2, 36 * S2); ctx.font = `${Math.round(22 * S2)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(c.k === 'gun' ? '🔫' : c.k === 'heal' ? '❤️' : '⭐', X(c.x), Y(c.y - 18)); }
+    // 子弹
+    ctx.fillStyle = '#ffe066'; for (const b of br.bul) ctx.fillRect(X(b.x) - 6, Y(b.y) - 2, 12, 4);
+    // 人
+    for (const id of G.ids) { if (!(G.lives[id] > 0)) continue; const p = id === me.id ? br.me : br.pos[id]; if (!p) continue; const x = X(p.x), y = Y(p.y), s = S2 * 1.35, f = p.face || 1;
+      ctx.globalAlpha = p.inv > 0 || p.i ? 0.5 + 0.3 * Math.sin(performance.now() / 60) : 1;
+      ctx.fillStyle = pcolor(id); ctx.beginPath(); ctx.roundRect(x - 13 * s, y - 50 * s, 26 * s, 34 * s, 10 * s); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y - 60 * s, 12 * s, 0, 7); ctx.fill(); ctx.fillStyle = '#111'; ctx.fillRect(x + f * 4 * s - 2 * s, y - 63 * s, 4 * s, 4 * s);
+      ctx.strokeStyle = pcolor(id); ctx.lineWidth = 6 * s; ctx.lineCap = 'round'; ctx.beginPath(); const run = Math.sin(performance.now() / 70) * (p.air ? 0 : 1); ctx.moveTo(x - 6 * s, y - 18 * s); ctx.lineTo(x - 6 * s - run * 6 * s, y); ctx.moveTo(x + 6 * s, y - 18 * s); ctx.lineTo(x + 6 * s + run * 6 * s, y); ctx.stroke();
+      const punching = p.punch > 0 || p.p; ctx.beginPath(); ctx.moveTo(x, y - 40 * s); ctx.lineTo(x + f * (punching ? 46 : 16) * s, y - (punching ? 40 : 28) * s); ctx.stroke(); if (punching) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x + f * 48 * s, y - 40 * s, 7 * s, 0, 7); ctx.fill(); }
+      if (p.gun > 0 || p.g > 0) { ctx.font = `${Math.round(18 * s)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('🔫', x + f * 22 * s, y - 34 * s); }
+      ctx.globalAlpha = 1; const dmg = Math.round(p.dmg != null ? p.dmg : p.d || 0); ctx.font = `800 ${Math.max(10, Math.round(13 * s))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.7)'; const tag = `${id === me.id ? '我' : pname(id).slice(0, 5)} ${dmg}%`; ctx.strokeText(tag, x, y - 76 * s); ctx.fillStyle = dmg > 100 ? '#ff6b6b' : dmg > 50 ? '#ffd166' : '#fff'; ctx.fillText(tag, x, y - 76 * s); ctx.textBaseline = 'middle'; }
+    for (const e of br.fx) { e.t += 0.03; ctx.globalAlpha = Math.max(0, 1 - e.t * 2); ctx.font = `900 ${Math.round(26 * S2)}px sans-serif`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText('💥', X(e.x), Y(e.y)); } ctx.globalAlpha = 1; br.fx = br.fx.filter(e => e.t < 0.5);
+    // 上面：命
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '700 12px sans-serif'; G.ids.forEach((id, i) => { ctx.fillStyle = pcolor(id); ctx.fillText(`${pname(id).slice(0, 5)} ${'❤️'.repeat(Math.max(0, G.lives[id] || 0))}${(G.ko || {})[id] ? ' 💀' + G.ko[id] : ''}`, 8 + (i % 3) * (W / 3), 6 + Math.floor(i / 3) * 16); });
+    if (el < 0) { ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 80px sans-serif'; ctx.fillStyle = '#ffd166'; ctx.fillText(Math.ceil(-el), W / 2, H / 2); }
+    if (G.ids.includes(me.id) && !(G.lives[me.id] > 0) && G.ph === 'play') { ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = '900 20px sans-serif'; ctx.fillText('💀 你出局了，在旁边看', W / 2, H * 0.3); }
+  }
+  GAMES.brawl = {
+    icon: '🥊', name: '天台大乱斗', sub: '城市天台上跳来跳去互打', how: '大家在城市天台上，◀ ▶ 走路，「跳」可以跳两段，「打」出拳。被打越多（头上的 % 越高）就会飞越远，掉下天台扣一条命。天上会掉箱子：🔫 枪、❤️ 补血、⭐ 无敌。每人 3 条命，最后还活着的赢。横过来玩更好打！', tags: ['动作', '派对'], color: '#ef476f', min: 1, max: 8, chips: false, full: true, fresh: true,
+    start(st, ids) { ids = ids.slice(); let k = 0; while (ids.length < 2) { const id = 'bot' + Math.random().toString(36).slice(2, 9); ids.push(id); st.players.push({ id, name: '电脑 ' + ++k, chips: st.startChips || 100, bot: true }); } return { ids, seed: Math.floor(Math.random() * 1e9), ph: 'play', lives: Object.fromEntries(ids.map(id => [id, BR.LIVES])), ko: {}, t0: Date.now() }; },
+    view: st => st.g, stop: brStop,
+    onMsg(m) {
+      if (!br) return;
+      if (m.t === 'bm' && m.id !== me.id && !br.bots[m.id]) { const p = br.pos[m.id] || (br.pos[m.id] = {}); Object.assign(p, { x: m.x, y: m.y, face: m.f, d: m.d, dmg: m.d, p: m.p, air: m.a, g: m.g, i: m.i }); }
+      if (m.t === 'bm' && role !== 'host' && br.bots[m.id] === undefined && m.id.startsWith('bot')) { const p = br.pos[m.id] || (br.pos[m.id] = {}); Object.assign(p, { x: m.x, y: m.y, face: m.f, dmg: m.d, p: m.p, g: m.g, i: m.i }); }
+      if (m.t === 'bh') { if (m.to === me.id) { brKnock(br.me, m.f, m.d, m.k); br.me.lastBy = m.by; sfx.hit(); fx.vib(60); } else if (role === 'host' && br.bots[m.to]) { brKnock(br.bots[m.to], m.f, m.d, m.k); br.bots[m.to].lastBy = m.by; } }
+      if (m.t === 'bb') br.bul.push({ x: m.x, y: m.y, vx: m.vx, by: m.by, t: 0 });
+      if (m.t === 'bp') sfx.tap();
+      if (m.t === 'bc') br.crates[m.c] = { x: m.x, y: m.y, k: m.k };
+      if (m.t === 'bk' && role === 'host') brPick(m.c, m.by);
+      if (m.t === 'bw') { const c = br.crates[m.c]; if (c) { c.taken = 1; c.won = m.by; } if (m.by === me.id) brGive(me.id, m.k); }
+    },
+    render(V) {
+      const g = V.g, inG = g.ids.includes(V.you), done = g.ph === 'over';
+      const end = done ? `<div class="endcard"><h3>🥊 ${g.win ? esc(pname(g.win)) + ' 赢了' : '平手'}</h3>${(g.rank || []).map((id, i) => `<div class="erow ${id === V.you ? 'me' : ''}"><span class="rk">${i + 1}</span>${avatar(id, 'sm')}<span>${esc(pname(id))}</span><b>${'❤️'.repeat(Math.max(0, g.lives[id] || 0))} 打下 ${g.ko[id] || 0} 次</b></div>`).join('')}<div style="flex:1"></div>${role === 'host' ? '<button class="btn gold big" id="brAgain">再打一局</button><button class="btn" id="brLobby">回大厅</button>' : '<div class="wait">等房主</div>'}</div>` : '';
+      return {
+        html: `<div class="cv" id="brcv">${end}</div>${inG && !done ? '<div class="br-pad"><div class="br-l"><button class="br-b" id="brL">◀</button><button class="br-b" id="brR">▶</button></div><div class="br-r"><button class="br-b jump" id="brJ">⤴<small>跳</small></button><button class="br-b hit" id="brH">👊<small>打</small></button></div></div>' : ''}`,
+        bind() {
+          const s = brSetup(V), cv = $('#brcv'); if (cv) cv.insertBefore(s.canvas, cv.firstChild); on('brAgain', lobby.start); on('brLobby', lobby.toLobby);
+          const hold = (id, d) => { const b = $(id); if (!b) return; b.onpointerdown = e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch {} s.dir = d; b.classList.add('on'); }; b.onpointerup = b.onpointercancel = b.onlostpointercapture = () => { if (s.dir === d) s.dir = 0; b.classList.remove('on'); }; };
+          hold('#brL', -1); hold('#brR', 1);
+          const tap = (id, f) => { const b = $(id); if (b) b.onpointerdown = e => { e.preventDefault(); f(); b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 120); }; };
+          tap('#brJ', () => (s.jumpQ = 1)); tap('#brH', () => (s.hitQ = 1));
+          if (done && fx.once('brdone:' + g.seed)) g.win === V.you ? (sfx.big(), fx.confetti()) : sfx.lose();
+        },
+      };
+    },
+  };
+
+  // ═════════ 篮球传奇 ═════════
+  // 侧面看的篮球，红队对蓝队（1v1 / 2v2 / 3v3）。按住「投」看力量条，在绿色区放手最准。空中靠近篮框会扣篮。没球的时候「抢」可以抄球，「跳」可以盖帽。
+  // 网络：每人自己算自己走路跳；球由房主算（谁拿球、投出去飞到哪、进没进），0.05 秒广播一次。
+  const KB = { W: 1400, FLOOR: 600, SPD: 340, JMP: 860, G: 2300, RIMY: 330, RIMR: 36, HOOP: [110, 1290], WIN: 11, TIME: 150, THREE: 430 };
+  let kb = null;
+  function kbStop() { if (kb) { cancelAnimationFrame(kb.raf); window.removeEventListener('keydown', kb.kd); window.removeEventListener('keyup', kb.ku); kb = null; } }
+  const kbTeam = (g, id) => (g.red.includes(id) ? 0 : 1); // 红队往右边篮框攻（HOOP[1]）
+  function kbSetup(V) {
+    const g = V.g, key = V.gid + ':' + g.seed; if (kb && kb.key === key) return kb; kbStop();
+    kb = { key, canvas: document.createElement('canvas'), pos: {}, bots: {}, ball: { h: null, x: 700, y: 200, vx: 0, vy: 0, shot: null }, me: null, last: performance.now(), sent: 0, snap: 0, keys: {}, charge: null, fx: [], cd: 0 };
+    g.ids.forEach(id => { const t = kbTeam(g, id), p = { x: t ? 900 + Math.random() * 200 : 300 + Math.random() * 200, y: KB.FLOOR, vx: 0, vy: 0, face: t ? -1 : 1, air: 0 }; kb.pos[id] = p; if (isBot(id)) kb.bots[id] = { ...p, think: 0, scd: 0 }; if (id === me.id) kb.me = { ...p }; });
+    kbReset(g, Math.random() < 0.5 ? 0 : 1);
+    kb.kd = e => { kb.keys[e.key] = 1; if (e.key === 'ArrowUp' || e.key === 'w') { kb.jumpQ = 1; e.preventDefault(); } if (e.key === ' ' && kb.charge == null) { kb.charge = performance.now(); e.preventDefault(); } };
+    kb.ku = e => { delete kb.keys[e.key]; if (e.key === ' ') kbRelease(); };
+    window.addEventListener('keydown', kb.kd); window.addEventListener('keyup', kb.ku);
+    const loop = () => { if (!kb || kb.key !== key) return; kbFrame(); kb.raf = requestAnimationFrame(loop); }; kb.raf = requestAnimationFrame(loop);
+    return kb;
+  }
+  function kbReset(g, team) { const b = kb.ball, ids = g.ids.filter(id => kbTeam(g, id) === team); b.h = kt.pick(ids); b.shot = null; b.vx = b.vy = 0; b.lock = 0.6; }
+  const kbP = id => (id === me.id && kb.me ? kb.me : kb.bots[id] || kb.pos[id]);
+  const kbPower = t0 => { const t = ((performance.now() - t0) / 900) % 2; return t > 1 ? 2 - t : t; }; // 0→1→0 来回
+  function kbRelease() { if (kb.charge == null) return; const p = kbPower(kb.charge); kb.charge = null; const G = S.g, m = kb.me; if (!m || kb.ball.h !== me.id) return; const msg = { t: 'kt', id: me.id, x: Math.round(m.x), y: Math.round(m.y), p: Math.round(p * 100) / 100, air: m.air }; if (role === 'host') kbShoot(G, msg); else bcast(msg); sfx.whoosh(); }
+  function kbAct() { // 「投/抢」按钮：有球 = 开始蓄力；没球 = 抢
+    if (!kb.me) return; if (kb.ball.h === me.id) { kb.charge = performance.now(); return; }
+    if (kb.cd > 0) return; kb.cd = 0.6; const msg = { t: 'kp', id: me.id, x: kb.me.x, y: kb.me.y }; if (role === 'host') kbSteal(S.g, msg); else bcast(msg); sfx.tap();
+  }
+  function kbPhys(p, dir, jump, dt) { p.vx += (dir * KB.SPD - p.vx) * Math.min(1, dt * 12); if (jump && !p.air) { p.vy = -KB.JMP; p.air = 1; } p.vy += KB.G * dt; p.x = clamp(p.x + p.vx * dt, 30, KB.W - 30); p.y += p.vy * dt; if (p.y >= KB.FLOOR) { p.y = KB.FLOOR; p.vy = 0; p.air = 0; } if (dir) p.face = dir; }
+  function kbShoot(G, m) { // 房主：算出手
+    const b = kb.ball; if (b.h !== m.id || G.ph !== 'play') return; const team = kbTeam(G, m.id), hx = KB.HOOP[1 - team === 0 ? 0 : 1] , tx = KB.HOOP[team ? 0 : 1];
+    const sx = m.x + (tx > m.x ? 18 : -18), sy = m.y - 92, dist = Math.abs(tx - sx), three = Math.abs(tx - m.x) > KB.THREE;
+    // 扣篮：在空中而且很靠近
+    if (m.air && dist < 130) { b.h = null; b.x = tx; b.y = KB.RIMY - 10; b.vx = 0; b.vy = 300; b.shot = { by: m.id, team, pts: 2, dunk: 1, t: 0 }; bcast({ t: 'kd', id: m.id }); kbScore(G, team, 2, m.id, true); return; }
+    const err = Math.abs(m.p - 0.82), q = err < 0.08 ? 0 : err < 0.2 ? 1 : 2; // 0 = 完美
+    const T = 0.85 + dist / 1500, aimX = tx + (q === 0 ? (Math.random() - 0.5) * 16 : (Math.random() - 0.5) * (q === 1 ? 70 : 170)) + (dist > 700 ? (Math.random() - 0.5) * 60 : 0);
+    b.h = null; b.x = sx; b.y = sy; b.vx = (aimX - sx) / T; b.vy = (KB.RIMY - 18 - sy - 0.5 * KB.G * T * T) / T; b.shot = { by: m.id, team, pts: three ? 3 : 2, t: 0, q };
+    bcast({ t: 'kq', q, id: m.id });
+  }
+  function kbSteal(G, m) { const b = kb.ball; if (!b.h || kbTeam(G, b.h) === kbTeam(G, m.id) || b.lock > 0) return; const h = kbP(b.h); if (!h || Math.abs(h.x - m.x) > 70 || Math.abs(h.y - m.y) > 80) return; if (Math.random() < 0.38) { b.h = m.id; b.lock = 0.8; bcast({ t: 'kst', id: m.id }); sfx.ok(); } }
+  function kbScore(G, team, pts, by, dunk) {
+    kb.scored = 1; bcast({ t: 'ksc', team, pts, by, dunk: dunk ? 1 : 0 }); kbScoredFx(team, pts, by, dunk);
+    save(st => { const g = st.g; if (g.ph !== 'play') return false; g.score[team] += pts; g.pts = { ...(g.pts || {}), [by]: ((g.pts || {})[by] || 0) + pts }; if (g.score[team] >= KB.WIN) kbEnd(st); });
+    setTimeout(() => { if (kb) { kbReset(S.g, 1 - team); kb.scored = 0; } }, 1300);
+  }
+  function kbScoredFx(team, pts, by, dunk) { kb.fx.push({ t: 0, txt: `${dunk ? '🔥 扣篮！' : pts === 3 ? '🎯 三分！' : '🏀 进了！'} +${pts}`, c: team ? '#4dabf7' : '#ff6b6b' }); sfx.big(); if (by === me.id) { fx.confetti(); fx.vib([60, 40, 60]); } }
+  function kbEnd(st) { const g = st.g; g.ph = 'over'; g.win = g.score[0] === g.score[1] ? -1 : g.score[0] > g.score[1] ? 0 : 1; if (g.win >= 0) awardTeam(st, g.win ? g.blue : g.red); }
+  function kbBall(G, dt) { // 房主：球的物理
+    const b = kb.ball; b.lock = Math.max(0, (b.lock || 0) - dt);
+    if (b.h) { const p = kbP(b.h); if (p) { b.x = p.x + (p.face || 1) * 22; b.y = p.y - 50 + Math.abs(Math.sin(performance.now() / 160)) * (p.air ? 0 : 28); } return; }
+    const oy = b.y; b.vy += KB.G * dt; b.x += b.vx * dt; b.y += b.vy * dt; if (b.shot) b.shot.t += dt;
+    // 篮框：两边铁框是小圆点，篮板挡住
+    for (const hx of KB.HOOP) { const dirIn = hx < 700 ? 1 : -1, board = hx - dirIn * 14;
+      if (Math.abs(b.x - board) < 10 && b.y > KB.RIMY - 120 && b.y < KB.RIMY + 10) { b.vx = -b.vx * 0.6; b.x = board + Math.sign(b.x - board || dirIn) * 11; sfx.tap(); }
+      for (const rx of [hx - KB.RIMR, hx + KB.RIMR]) { const dx = b.x - rx, dy = b.y - KB.RIMY, d = Math.hypot(dx, dy); if (d < 16 && d > 0) { const nx = dx / d, ny = dy / d, vn = b.vx * nx + b.vy * ny; if (vn < 0) { b.vx -= 1.6 * vn * nx; b.vy -= 1.6 * vn * ny; sfx.tap(); } b.x = rx + nx * 16; b.y = KB.RIMY + ny * 16; } }
+      // 进球：往下穿过框
+      if (b.shot && !kb.scored && oy < KB.RIMY && b.y >= KB.RIMY && Math.abs(b.x - hx) < KB.RIMR - 8) { const team = hx === KB.HOOP[1] ? 0 : 1; kbScore(G, team, team === b.shot.team ? b.shot.pts : 2, b.shot.by); b.shot = null; }
+    }
+    if (b.y > KB.FLOOR - 12) { b.y = KB.FLOOR - 12; b.vy = -Math.abs(b.vy) * 0.62; b.vx *= 0.85; if (Math.abs(b.vy) < 80) b.vy = 0; if (b.shot && b.shot.t > 0.3) b.shot = null; }
+    if (b.x < 15 || b.x > KB.W - 15) { b.vx = -b.vx * 0.7; b.x = clamp(b.x, 15, KB.W - 15); }
+    // 盖帽：对方在空中、手碰到刚出手的球
+    if (b.shot && b.shot.t < 0.5) for (const id of G.ids) { if (kbTeam(G, id) === b.shot.team) continue; const p = kbP(id); if (p && p.air && Math.abs(p.x - b.x) < 38 && b.y > p.y - 150 && b.y < p.y - 60) { b.vx = -b.vx * 0.5 + (Math.random() - 0.5) * 200; b.vy = 200; b.shot = null; bcast({ t: 'kbk', id }); kb.fx.push({ t: 0, txt: '🖐️ 盖帽！', c: '#fff' }); sfx.boom(); break; } }
+    // 捡球
+    if (!b.shot && !kb.scored) for (const id of G.ids) { const p = kbP(id); if (p && Math.abs(p.x - b.x) < 40 && b.y > p.y - 120 && b.y < p.y + 10) { b.h = id; b.lock = 0.4; break; } }
+  }
+  function kbBots(G, dt) {
+    const b = kb.ball;
+    for (const [id, p] of Object.entries(kb.bots)) {
+      const team = kbTeam(G, id), tx = KB.HOOP[team ? 0 : 1], myX = tx; p.scd = Math.max(0, p.scd - dt); let dir = 0, jump = 0;
+      if (b.h === id) { const d = tx - p.x; if (Math.abs(d) > 260 + Math.random() * 120) dir = Math.sign(d); else if (!p.scd) { p.scd = 2; p.face = Math.sign(d); const close = Math.abs(d) < 160; if (close && !p.air) { jump = 1; setTimeout(() => kb && kb.ball.h === id && kbShoot(G, { id, x: p.x, y: p.y, p: 0.82, air: 1 }), 220); } else kbShoot(G, { id, x: p.x, y: p.y, p: 0.82 + (Math.random() - 0.5) * 0.35 }); } }
+      else { const tgt = b.h ? kbP(b.h) : b; if (tgt) { const d = tgt.x - p.x; dir = Math.abs(d) > 30 ? Math.sign(d) : 0; if (b.h && kbTeam(G, b.h) !== team && Math.abs(d) < 60 && !p.scd) { p.scd = 0.9; kbSteal(G, { id, x: p.x, y: p.y }); } if (b.shot && b.shot.team !== team && b.shot.t < 0.2 && Math.abs(b.x - p.x) < 120 && Math.random() < 0.5) jump = 1; if (!b.h && b.y < p.y - 140 && Math.abs(d) < 60) jump = 1; } }
+      kbPhys(p, dir, jump, dt); kb.pos[id] = p;
+    }
+  }
+  function kbFrame() {
+    const G = S && S.phase === 'play' && S.game === 'bball' && S.g; if (!G || !kb) return;
+    const now = performance.now(), dt = Math.min(0.033, (now - kb.last) / 1000); kb.last = now; kb.cd = Math.max(0, kb.cd - dt);
+    const el = fx.t('kb:' + G.seed) / 1000 - 3.2, run = el >= 0 && G.ph === 'play', inG = G.ids.includes(me.id);
+    if (inG && run && kb.me) { const k = kb.keys, dir = (k.ArrowRight || k.d || kb.dir > 0 ? 1 : 0) - (k.ArrowLeft || k.a || kb.dir < 0 ? 1 : 0); kbPhys(kb.me, kb.charge != null && !kb.me.air ? dir * 0.3 : dir, kb.jumpQ, dt); kb.jumpQ = 0; if (now - kb.sent > 50) { kb.sent = now; bcast({ t: 'km', id: me.id, x: Math.round(kb.me.x), y: Math.round(kb.me.y), f: kb.me.face, a: kb.me.air }); } }
+    if (role === 'host' && run) { kbBots(G, dt); kbBall(G, dt); if (now - kb.snap > 50) { kb.snap = now; const b = kb.ball; bcast({ t: 'kball', h: b.h, x: Math.round(b.x), y: Math.round(b.y) }); }
+      if (el > KB.TIME && !kb.timeUp) { kb.timeUp = 1; save(st => { if (st.g.ph !== 'play') return false; kbEnd(st); }); } }
+    if (role !== 'host' && kb.ball.h && kbP(kb.ball.h)) { const p = kbP(kb.ball.h); kb.ball.dx = p.x + (p.face || 1) * 22; kb.ball.dy = p.y - 50; }
+    const pb = $('#kbPow'); if (pb) { const p = kb.charge != null ? kbPower(kb.charge) : 0; pb.style.setProperty('--p', p.toFixed(2)); pb.classList.toggle('show', kb.charge != null); }
+    const ab = $('#kbAct'); if (ab) { const has = kb.ball.h === me.id, t = has ? '投' : '抢'; if (ab.dataset.t !== t) { ab.dataset.t = t; ab.querySelector('small').textContent = has ? '按住投篮' : '抢球'; ab.querySelector('span').textContent = has ? '🏀' : '✋'; } }
+    kbDraw(G, el);
+  }
+  function kbDraw(G, el) {
+    const cv = kb.canvas, ctx = cv.getContext('2d'), W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1); if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); } ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 镜头：跟着球，看得到大约 900 宽
+    const b = kb.ball, bx = role === 'host' || !b.h ? b.x : b.dx || b.x, by = role === 'host' || !b.h ? b.y : b.dy || b.y;
+    const viewW = Math.min(KB.W, Math.max(W > H ? 900 : 620, W * 1.1)), sc = Math.min(W / viewW, H / 560); kb.camX = kb.camX == null ? bx : kb.camX + (clamp(bx, viewW / 2, KB.W - viewW / 2) - kb.camX) * 0.08;
+    const X = x => W / 2 + (x - kb.camX) * sc, Y = y => H * (W > H ? 0.92 : 0.86) - (KB.FLOOR - y) * sc;
+    ctx.fillStyle = '#1d1a2f'; ctx.fillRect(0, 0, W, H); // 观众席
+    for (let i = 0; i < 60; i++) { ctx.fillStyle = `hsl(${(i * 47) % 360},40%,${30 + (i % 3) * 8}%)`; ctx.beginPath(); ctx.arc(X(i * 26 - 80), Y(220 + (i % 2) * 30), 9 * sc, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#c98b4b'; ctx.fillRect(0, Y(KB.FLOOR), W, H); ctx.fillStyle = '#b5773a'; for (let x = 0; x < KB.W; x += 60) ctx.fillRect(X(x), Y(KB.FLOOR), 2, H);
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(X(700), Y(KB.FLOOR)); ctx.lineTo(X(700), Y(KB.FLOOR) + 30); ctx.stroke(); for (const hx of KB.HOOP) { const d = hx < 700 ? 1 : -1; ctx.beginPath(); ctx.moveTo(X(hx + d * KB.THREE), Y(KB.FLOOR) + 2); ctx.lineTo(X(hx + d * KB.THREE), Y(KB.FLOOR) + 22); ctx.stroke(); }
+    // 篮框
+    for (const [i, hx] of KB.HOOP.entries()) { const d = hx < 700 ? 1 : -1, bd = hx - d * 14; ctx.fillStyle = '#ddd'; ctx.fillRect(X(bd - d * 60), Y(KB.FLOOR), 8 * sc, -(KB.FLOOR - KB.RIMY + 90) * sc); ctx.fillStyle = '#fff'; ctx.fillRect(X(bd) - 4 * sc, Y(KB.RIMY - 120), 8 * sc, 130 * sc); ctx.strokeStyle = i ? '#ff6b6b' : '#4dabf7'; ctx.lineWidth = 3; ctx.strokeRect(X(bd) - 4 * sc, Y(KB.RIMY - 120), 8 * sc, 130 * sc);
+      ctx.strokeStyle = '#ff6a00'; ctx.lineWidth = 5 * sc; ctx.beginPath(); ctx.moveTo(X(hx - KB.RIMR), Y(KB.RIMY)); ctx.lineTo(X(hx + KB.RIMR), Y(KB.RIMY)); ctx.stroke(); ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.5; for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(X(hx + k * 11), Y(KB.RIMY)); ctx.lineTo(X(hx + k * 6), Y(KB.RIMY + 46)); ctx.stroke(); } }
+    // 人（大头）
+    for (const id of G.ids) { const p = kbP(id); if (!p) continue; const x = X(p.x), y = Y(p.y), s = sc, f = p.face || 1, col = kbTeam(G, id) ? '#1971c2' : '#e03131';
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(x, Y(KB.FLOOR), 22 * s, 6 * s, 0, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#f1c27d'; ctx.lineWidth = 7 * s; ctx.lineCap = 'round'; const run = p.air ? 0 : Math.sin(performance.now() / 80) * Math.min(1, Math.abs(p.vx || 0) / 100 + (isBot(id) || id === me.id ? 0 : 0.5)); ctx.beginPath(); ctx.moveTo(x - 7 * s, y - 34 * s); ctx.lineTo(x - 7 * s - run * 8 * s, y); ctx.moveTo(x + 7 * s, y - 34 * s); ctx.lineTo(x + 7 * s + run * 8 * s, y); ctx.stroke();
+      ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(x - 16 * s, y - 72 * s, 32 * s, 40 * s, 8 * s); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = `900 ${Math.round(14 * s)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(G.ids.indexOf(id) + 1), x, y - 52 * s);
+      ctx.fillStyle = '#f1c27d'; ctx.beginPath(); ctx.arc(x, y - 98 * s, 28 * s, 0, 7); ctx.fill(); ctx.fillStyle = pcolor(id); ctx.beginPath(); ctx.arc(x, y - 112 * s, 24 * s, Math.PI, 0); ctx.fill(); ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(x + f * 10 * s, y - 98 * s, 3.5 * s, 0, 7); ctx.fill(); ctx.fillRect(x + f * 4 * s - 4 * s, y - 84 * s, 10 * s, 2.5 * s);
+      ctx.font = `800 ${Math.max(10, Math.round(12 * s))}px sans-serif`; ctx.textBaseline = 'bottom'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.6)'; const nm = id === me.id ? '我' : pname(id).slice(0, 5); ctx.strokeText(nm, x, y - 132 * s); ctx.fillStyle = id === me.id ? '#ffd43b' : '#fff'; ctx.fillText(nm, x, y - 132 * s); ctx.textBaseline = 'middle';
+      if (id === me.id && kb.charge != null) { const pw = kbPower(kb.charge); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x + 32 * s, y - 120 * s, 10 * s, 70 * s); ctx.fillStyle = 'rgba(80,220,120,.6)'; ctx.fillRect(x + 32 * s, y - 120 * s + 70 * s * (1 - 0.9), 10 * s, 70 * s * 0.16); ctx.fillStyle = Math.abs(pw - 0.82) < 0.08 ? '#51cf66' : '#ffd43b'; ctx.fillRect(x + 32 * s, y - 50 * s - 70 * s * pw, 10 * s, 4 * s); } }
+    // 球
+    ctx.fillStyle = '#ff8c1a'; ctx.beginPath(); ctx.arc(X(bx), Y(by), 13 * sc, 0, 7); ctx.fill(); ctx.strokeStyle = '#7a3b00'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(X(bx), Y(by), 13 * sc, 0, 7); ctx.moveTo(X(bx) - 13 * sc, Y(by)); ctx.lineTo(X(bx) + 13 * sc, Y(by)); ctx.stroke();
+    // 比分
+    const left = Math.max(0, Math.ceil(KB.TIME - Math.max(0, el))); ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(W / 2 - 100, 6, 200, 40); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 22px sans-serif'; ctx.fillStyle = '#ff6b6b'; ctx.fillText(G.score[0], W / 2 - 60, 26); ctx.fillStyle = '#4dabf7'; ctx.fillText(G.score[1], W / 2 + 60, 26); ctx.fillStyle = '#fff'; ctx.font = '700 13px sans-serif'; ctx.fillText(`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}　先到 ${KB.WIN}`, W / 2, 26);
+    ctx.font = '700 11px sans-serif'; ctx.fillText(`你是${kbTeam(G, me.id) ? '🔵 蓝队（往左投）' : '🔴 红队（往右投）'}`, W / 2, 56);
+    for (const e of kb.fx) { e.t += 0.016; ctx.globalAlpha = Math.max(0, 1 - e.t / 1.2); ctx.font = '900 30px sans-serif'; ctx.fillStyle = e.c; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 4; ctx.strokeText(e.txt, W / 2, H * 0.3 - e.t * 30); ctx.fillText(e.txt, W / 2, H * 0.3 - e.t * 30); } ctx.globalAlpha = 1; kb.fx = kb.fx.filter(e => e.t < 1.2);
+    if (el < 0) { ctx.font = '900 80px sans-serif'; ctx.fillStyle = '#ffd43b'; ctx.fillText(Math.ceil(-el), W / 2, H / 2); }
+  }
+  GAMES.bball = {
+    icon: '🏀', name: '篮球传奇', sub: '红队对蓝队，投篮、扣篮、盖帽', how: '侧面看的篮球，红队往右边投，蓝队往左边投。有球的时候按住「🏀 投」，旁边会有力量条，在绿色那格放手最准；在空中靠近篮框按就会扣篮。没球的时候「✋ 抢」可以抄球，对方投篮时「跳」可以盖帽。三分线外进球 3 分，先到 11 分或时间到分数高的队赢。', tags: ['动作', '派对'], color: '#f08c00', min: 1, max: 6, chips: false, full: true, fresh: true,
+    start(st, ids) { ids = shuffle(ids.slice()); let k = 0; const add = () => { const id = 'bot' + Math.random().toString(36).slice(2, 9); ids.push(id); st.players.push({ id, name: '电脑 ' + ++k, chips: st.startChips || 100, bot: true }); }; while (ids.length < 2 || ids.length % 2) add(); const red = ids.filter((_, i) => i % 2 === 0), blue = ids.filter((_, i) => i % 2 === 1); return { ids, red, blue, seed: Math.floor(Math.random() * 1e9), ph: 'play', score: [0, 0], pts: {}, t0: Date.now() }; },
+    view: st => st.g, stop: kbStop,
+    onMsg(m) {
+      if (!kb) return;
+      if (m.t === 'km' && m.id !== me.id) { const p = kb.pos[m.id] || (kb.pos[m.id] = {}); p.vx = (m.x - (p.x || m.x)) * 20; Object.assign(p, { x: m.x, y: m.y, face: m.f, air: m.a }); }
+      if (m.t === 'kball' && role !== 'host') Object.assign(kb.ball, { h: m.h, x: m.x, y: m.y });
+      if (role === 'host') { if (m.t === 'kt') kbShoot(S.g, m); if (m.t === 'kp') kbSteal(S.g, m); }
+      if (m.t === 'ksc' && role !== 'host') kbScoredFx(m.team, m.pts, m.by, m.dunk);
+      if (m.t === 'kbk') { kb.fx.push({ t: 0, txt: '🖐️ 盖帽！', c: '#fff' }); sfx.boom(); }
+      if (m.t === 'kst') { sfx.ok(); if (m.id === me.id) fx.toast('✋ 抢到了！'); }
+      if (m.t === 'kq' && m.id === me.id) fx.toast(m.q === 0 ? '✨ 完美出手！' : m.q === 1 ? '还不错' : '偏了…');
+    },
+    render(V) {
+      const g = V.g, inG = g.ids.includes(V.you), done = g.ph === 'over';
+      const end = done ? `<div class="endcard"><h3>${g.win < 0 ? '平手' : g.win ? '🔵 蓝队赢了' : '🔴 红队赢了'}　${g.score[0]} : ${g.score[1]}</h3>${g.ids.slice().sort((a, b) => ((g.pts || {})[b] || 0) - ((g.pts || {})[a] || 0)).map(id => `<div class="erow ${id === V.you ? 'me' : ''}"><span class="rk">${g.red.includes(id) ? '🔴' : '🔵'}</span>${avatar(id, 'sm')}<span>${esc(pname(id))}</span><b>${(g.pts || {})[id] || 0} 分</b></div>`).join('')}<div style="flex:1"></div>${role === 'host' ? '<button class="btn gold big" id="kbAgain">再打一场（重新分队）</button><button class="btn" id="kbLobby">回大厅</button>' : '<div class="wait">等房主</div>'}</div>` : '';
+      return {
+        html: `<div class="cv" id="kbcv">${end}<div class="kbpow" id="kbPow"><i></i></div></div>${inG && !done ? '<div class="br-pad"><div class="br-l"><button class="br-b" id="kbL">◀</button><button class="br-b" id="kbR">▶</button></div><div class="br-r"><button class="br-b jump" id="kbJ">⤴<small>跳</small></button><button class="br-b shoot" id="kbAct"><span>🏀</span><small>按住投篮</small></button></div></div>' : ''}`,
+        bind() {
+          const s = kbSetup(V), cv = $('#kbcv'); if (cv) cv.insertBefore(s.canvas, cv.firstChild); on('kbAgain', lobby.start); on('kbLobby', lobby.toLobby);
+          const hold = (id, d) => { const b = $(id); if (!b) return; b.onpointerdown = e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch {} s.dir = d; b.classList.add('on'); }; b.onpointerup = b.onpointercancel = b.onlostpointercapture = () => { if (s.dir === d) s.dir = 0; b.classList.remove('on'); }; };
+          hold('#kbL', -1); hold('#kbR', 1);
+          const j = $('#kbJ'); if (j) j.onpointerdown = e => { e.preventDefault(); s.jumpQ = 1; };
+          const a = $('#kbAct'); if (a) { a.onpointerdown = e => { e.preventDefault(); try { a.setPointerCapture(e.pointerId); } catch {} a.classList.add('on'); kbAct(); }; a.onpointerup = a.onpointercancel = () => { a.classList.remove('on'); kbRelease(); }; }
+          if (done && fx.once('kbdone:' + g.seed)) { const won = (g.win === 0 && g.red.includes(V.you)) || (g.win === 1 && g.blue.includes(V.you)); won ? (sfx.big(), fx.confetti()) : sfx.lose(); }
+        },
+      };
+    },
+  };
+
   // ═════════ 画面总管 ═════════
   const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
   function peekHook() { const G = S && GAMES[S.game]; if (G && G.onPeek) G.onPeek(); }
@@ -7622,7 +7915,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   let rsT = 0;
   window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(() => { if (S) { invalidate(); render(); } }, 180); });
 
-  window.__party = { ft: () => ft, im: () => im, sl: () => sl, slRow,  bl: () => bl, cw: () => cw, sw: () => sw, sn: () => sn, sh: () => sh, state: () => S, view: () => V, me, lobby, GAMES, save, fx, sfx, ui: () => ui, peeked: () => peeked };
+  window.__party = { ft: () => ft, im: () => im, sl: () => sl, br: () => br, kb: () => kb, slRow,  bl: () => bl, cw: () => cw, sw: () => sw, sn: () => sn, sh: () => sh, state: () => S, view: () => V, me, lobby, GAMES, save, fx, sfx, ui: () => ui, peeked: () => peeked };
   const qRoom = (new URLSearchParams(location.search).get('room') || '').toUpperCase();
   // 有名字的人一打开就进大厅（或者刚才的房间）；链接带房间码就去那个房间
   const lastR = store.get('pg.lastRoom', null);
