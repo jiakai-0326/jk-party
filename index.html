@@ -706,7 +706,8 @@ html.kb .sm-q{padding:8px}html.kb .sm-q b{font-size:22px}
 /* 屁屁泳圈 */
 .ft-pad{display:flex;gap:10px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#0d1a12;align-items:stretch;user-select:none;-webkit-user-select:none;touch-action:none}
 .ft-pad button{-webkit-tap-highlight-color:transparent;touch-action:none;border:0;border-radius:18px;font:inherit;color:#fff}
-.ft-mv{flex:0 0 72px;font-size:28px;background:#24382b;box-shadow:inset 0 -4px 0 rgba(0,0,0,.35)}
+.ft-dir{flex:0 0 48%;display:flex;gap:8px}
+.ft-mv{flex:1;font-size:30px;background:#24382b;box-shadow:inset 0 -4px 0 rgba(0,0,0,.35)}
 .ft-mv.on{background:#3b5c46;transform:translateY(2px)}
 .ft-go{flex:1;position:relative;overflow:hidden;min-height:84px;background:#3d5a1c;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:inset 0 -5px 0 rgba(0,0,0,.35)}
 .ft-go i{position:absolute;left:0;bottom:0;top:0;width:calc(var(--g,1)*100%);background:linear-gradient(90deg,#8ab83a,#b8e04a);opacity:.55;transition:width .08s linear}
@@ -5789,7 +5790,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
           <div style="flex:1"></div>${isHost ? `<button class="btn gold big" id="ftAgain">再比一次（重新分队）</button><button class="btn" id="ftLobby">回大厅</button>` : '<div class="wait">等房主</div>'}</div>`;
       }
       return {
-        html: `<div class="cv" id="ftcv">${end}</div>${mk >= 0 && !done ? `<div class="ft-pad"><button class="ft-mv nohold" id="ftL">◀</button><button class="ft-go nohold" id="ftGo"><i id="ftGas"></i><span>💨</span><small>按住放屁</small></button><button class="ft-mv nohold" id="ftR">▶</button></div>` : ''}`,
+        html: `<div class="cv" id="ftcv">${end}</div>${mk >= 0 && !done ? `<div class="ft-pad"><div class="ft-dir"><button class="ft-mv nohold" id="ftL">◀</button><button class="ft-mv nohold" id="ftR">▶</button></div><button class="ft-go nohold" id="ftGo"><i id="ftGas"></i><span>💨</span><small>按住放屁</small></button></div>` : ''}`,
         bind() {
           const s = ftSetup(V), cv = $('#ftcv'); if (cv) cv.insertBefore(s.canvas, cv.firstChild);
           on('ftAgain', lobby.start); on('ftLobby', lobby.toLobby);
