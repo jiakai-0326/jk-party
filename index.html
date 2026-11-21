@@ -720,6 +720,11 @@ html.kb .sm-q{padding:8px}html.kb .sm-q b{font-size:22px}
 .ft-go small{position:relative;font-size:12px;font-weight:700;opacity:.85}
 .ft-go.on{transform:translateY(3px) scale(.98);background:#557d24}
 
+/* 抢房主 */
+.hreq{position:fixed;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);z-index:80;background:#1d1611;border:2px solid #f6e2a8;border-radius:16px;padding:12px 16px;color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.6);text-align:center;min-width:240px;max-width:calc(100vw - 32px)}
+.hreq small{display:block;opacity:.75;margin-top:4px}.hreq small b{color:#f6e2a8;font-size:16px}
+.hreq .hrb{display:flex;gap:8px;margin-top:10px}.hreq .hrb .btn{flex:1}
+
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
@@ -1481,7 +1486,16 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       history.replaceState(null, '', location.pathname);
       home();
     },
-    takeover() { save(st => { st.hostId = me.id; }); },
+    takeover() { save(st => { st.hostId = me.id; st.hostReq = null; }); },
+    // 抢房主：房主 10 秒没回就给你
+    requestHost() { save(st => { if (st.hostId === me.id) return false; if (st.hostReq && st.hostReq.id !== me.id && Date.now() - st.hostReq.at < 12000) return false; st.hostReq = { id: me.id, at: Date.now() }; }); fx.toast('已经问房主了，10 秒没回就是你当房主'); },
+    answerHost(yes) { save(st => { const r = st.hostReq; if (!r || st.hostId !== me.id) return false; st.hostReq = null; if (yes && st.players.some(p => p.id === r.id)) st.hostId = r.id; else st.hostNo = { id: r.id, at: Date.now() }; }); },
+    async superHost() { // Spiderman + 密码：马上拿房主
+      const pw = prompt('🕷️ Spiderman 密码'); if (!pw) return;
+      let ok = false; try { const { data } = await sb.rpc('party_super', { pw: pw.trim() }); ok = data === true; } catch {} // 密码只在 Supabase 里面对（加密存），网页里没有
+      if (!ok) { fx.toast('密码不对'); sfx.err(); return; }
+      save(st => { st.hostId = me.id; st.hostReq = null; }); sfx.big(); fx.toast('🕷️ 你现在是房主');
+    },
     giveHost(id) { save(st => { if (st.hostId !== me.id || !st.players.some(p => p.id === id)) return false; st.hostId = id; }); fx.toast(pname(id) + ' 现在是房主'); },
     async leave() {
       if (code) await sb.from('ndg_players').delete().eq('code', code).eq('pid', me.id);
@@ -1490,6 +1504,14 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     exit() { leaveRoom(false); history.replaceState(null, '', location.pathname); home(); }, // 房主先走开，房间还在
   };
 
+  const isSpidey = () => S && ((S.players.find(p => p.id === me.id) || {}).name || '').trim().toLowerCase() === 'spiderman';
+  setInterval(() => { // 抢房主倒数
+    if (!S || !S.hostReq) return;
+    const r = S.hostReq, left = Math.max(0, Math.ceil((10000 - (Date.now() - r.at)) / 1000));
+    $$('.hrLeft').forEach(e => (e.textContent = left));
+    if (r.id === me.id && Date.now() - r.at >= 10000) save(st => { const q = st.hostReq; if (!q || q.id !== me.id || Date.now() - q.at < 10000) return false; st.hostId = me.id; st.hostReq = null; });
+    if (!S.players.some(p => p.id === r.id) && role === 'host') save(st => { st.hostReq = null; });
+  }, 300);
   function hostGone() {
     if (!S || role === 'host') return false;
     if (online.has(S.hostId)) { hostGoneSince = 0; return false; }
@@ -5848,7 +5870,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
         <div class="si-h"><span class="ti">${G.icon}</span><div><b>${G.name}</b><p>${G.how}</p></div></div>
         ${isHost ? `${G.settings ? G.settings(V) : ''}${G.chips ? `<label>每个人开局几个筹码</label><div class="seg">${[50, 100, 200, 500, 1000].map(c => `<button class="${V.startChips === c ? 'on' : ''}" data-chips="${c}">${c}</button>`).join('')}</div>` : ''}` : ''}
       </section>
-      <div class="startbar">${isHost ? `<button class="btn gold big" id="start">开始 ${G.name}</button>` : hostGone() ? `<button class="btn big" id="takeover">房主不在线，我来当房主</button>` : `<div class="wait">等房主 ${esc(pname(V.hostId))} 开始</div>`}</div>`;
+      <div class="startbar">${isHost ? `<button class="btn gold big" id="start">开始 ${G.name}</button>` : hostGone() ? `<button class="btn big" id="takeover">房主不在线，我来当房主</button>` : `<div class="wait">等房主 ${esc(pname(V.hostId))} 开始 <button class="pill" id="lReq">👑 抢房主</button>${isSpidey() ? ' <button class="pill" id="lSuper">🕷️</button>' : ''}</div>`}</div>`;
   }
 
   function menuHTML(V, inGame, G) {
@@ -5864,11 +5886,19 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
         ${isHost && inGame ? `<button id="mLobby">🏠 回大厅换游戏</button>` : ''}
         <button id="mBoard">🏆 排行榜和战绩</button>
         ${isHost && V.players.some(p => p.id !== V.hostId && !isBot(p.id) && p.online) ? `<div class="lbl">👑 转房主给</div><div class="hostto">${V.players.filter(p => p.id !== V.hostId && !isBot(p.id) && p.online).map(p => `<button data-gh2="${esc(p.id)}">${esc(p.name)}</button>`).join('')}</div>` : ''}
-        ${isHost ? `<button id="mChips">🪙 全部人筹码重来</button><button id="mNight">🧹 今晚排行清零</button><button id="mExit">🚪 回首页（房间留着）</button><button id="mClose" class="danger">关掉房间</button>` : `${hostGone() ? `<button id="mTake">👑 房主不在线，我来当房主</button>` : ''}<button id="mLeave" class="danger">离开这个房间</button>`}
+        ${isHost ? `<button id="mChips">🪙 全部人筹码重来</button><button id="mNight">🧹 今晚排行清零</button><button id="mExit">🚪 回首页（房间留着）</button><button id="mClose" class="danger">关掉房间</button>` : `${hostGone() ? `<button id="mTake">👑 房主不在线，我来当房主</button>` : `<button id="mReq">👑 抢房主（房主 10 秒没回就给我）</button>`}${isSpidey() ? '<button id="mSuper">🕷️ Spiderman 用密码拿房主</button>' : ''}<button id="mLeave" class="danger">离开这个房间</button>`}
       </div>
     </div></div>`;
   }
 
+  function hostReqHTML() { // 抢房主的提示
+    const n = S && S.hostNo; if (n && n.id === me.id && Date.now() - n.at < 8000 && fx.once('hn' + n.at)) { fx.toast('房主说不给 😅'); sfx.err(); }
+    const r = S && S.hostReq; if (!r || Date.now() - r.at > 15000) return '';
+    const left = `<b class="hrLeft">${Math.max(0, Math.ceil((10000 - (Date.now() - r.at)) / 1000))}</b>`;
+    if (role === 'host') return `<div class="hreq host"><div>👑 <b>${esc(pname(r.id))}</b> 想当房主</div><small>${left} 秒内不回就自动给他</small><div class="hrb"><button class="btn gold" id="hrYes">给他</button><button class="btn" id="hrNo">不给</button></div></div>`;
+    if (r.id === me.id) return `<div class="hreq"><div>👑 等房主回答…</div><small>${left} 秒后没回就是你</small></div>`;
+    return '';
+  }
   function spinAnim(target) {
     const tiles = $$('.tile');
     const keys = tiles.map(c => c.dataset.game), end = keys.indexOf(target);
@@ -5938,7 +5968,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
         <b class="ttl">${inGame ? G.icon + ' ' + G.name : '大厅'}</b>
         <span class="tr">${inGame && G.chips && meP ? `<span class="mych"><i class="coin"></i>${meP.chips}</span>` : ''}<button class="ib" id="emoBtn" aria-label="表情">😀</button><button class="ib" id="menuBtn2" aria-label="菜单">☰</button></span>
       </div>${ui.emo ? `<div class="emobar">${EMOJIS.map(e => `<button data-emo="${e}">${e}</button>`).join('')}</div>` : ''}${netMsg ? `<div class="note">${esc(netMsg)}</div>` : ''}${watchBar}`;
-    const html = `<div class="${full ? 'stage' : 'page'}">${top}${body}</div>${ui.menu ? menuHTML(V, inGame, G) : ''}`;
+    const html = `<div class="${full ? 'stage' : 'page'}">${top}${body}</div>${ui.menu ? menuHTML(V, inGame, G) : ''}${hostReqHTML()}`;
     if (inGame && G.record) { try { G.record(V); } catch (e) { console.error(e); } }
     if (html === lastHTML && !force) return;
     // 正在打字：先不要重画（重画会把输入格换掉，手机键盘就收起来 / 出不来）。打完（离开输入格）再画
@@ -5961,6 +5991,9 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     $$('[data-gh2]').forEach(b => (b.onclick = () => { if (confirm('让 ' + pname(b.dataset.gh2) + ' 当房主？')) { ui.menu = false; lobby.giveHost(b.dataset.gh2); } }));
     on('wEnd', () => { if (confirm('结束这一局，大家回大厅？')) lobby.toLobby(); }); on('wTake', lobby.takeover);
     on('mChips', lobby.resetChips); on('mNight', lobby.resetNight); on('mExit', lobby.exit); on('mClose', lobby.close);
+    on('lReq', lobby.requestHost); on('lSuper', lobby.superHost);
+    on('mReq', () => { ui.menu = false; lobby.requestHost(); }); on('mSuper', () => { ui.menu = false; lobby.superHost(); });
+    on('hrYes', () => lobby.answerHost(true)); on('hrNo', () => lobby.answerHost(false));
     on('mLeave', lobby.leave); on('mTake', () => { ui.menu = false; lobby.takeover(); }); on('takeover', lobby.takeover);
     if (!inGame) {
       const link = location.origin + location.pathname + '?room=' + V.code;
