@@ -6021,11 +6021,16 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     // 噗！字
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; for (const p of ft.pops) { p.t += 1 / 60; if (p.t < 0) continue; const life = p.big ? 1.8 : 1; ctx.globalAlpha = Math.max(0, Math.min(1, (life - p.t) * 2)); ctx.font = `900 ${Math.round((p.big ? 22 : 18) + Math.min(p.t, 0.4) * 12)}px sans-serif`; ctx.lineWidth = 4; ctx.strokeStyle = '#2b3d10'; ctx.strokeText(p.w, X(p.x), Y(p.y) - p.t * 30); ctx.fillStyle = p.big ? '#fff' : '#d8f56a'; ctx.fillText(p.w, X(p.x), Y(p.y) - p.t * 30); } ctx.globalAlpha = 1; ft.pops = ft.pops.filter(p => p.t < (p.big ? 1.8 : 1));
   }
+  function ftLocal(V) { // 过关记录也存在这台手机 / 电脑，refresh 或换房主都不会不见
+    const L = store.get('jkp_fart', { b: 0, h: 0, s: {} }); L.s = L.s || {};
+    if (V) { L.b = Math.max(L.b || 0, V.fartBest || 0); L.h = Math.max(L.h || 0, V.fartHell || 0); for (const k in V.fartStars || {}) L.s[k] = Math.max(L.s[k] || 0, V.fartStars[k]); store.set('jkp_fart', L); }
+    return L;
+  }
   GAMES.fart = {
     icon: '💨', name: '屁屁泳圈', sub: '大家放屁推同一个泳圈', how: '大家坐在同一个游泳圈上。按住 💨 放屁，屁往外喷，泳圈就往反方向走：后面的人放会往前，前面的人放会往后，左右一起放会抵消。左右键可以在自己那一格里面移动。合作模式有 3 条命，6 关一关比一关多机关（水雷、鳄鱼、漩涡、电门、鲨鱼、刺墙）；或者分两队比赛谁先到终点。', tags: ['合作', '动作', '派对'], color: '#8ab83a', min: 1, max: 12, chips: false, full: true, fresh: true,
     defaults: { mode: 'coop', map: 0, hell: 0 },
     settings(V) {
-      const o = gopt(V, 'fart'), vs = o.mode === 'vs', hell = !!o.hell && !vs, best = hell ? V.fartHell || 0 : V.fartBest || 0, stars = V.fartStars || {};
+      const L = ftLocal(V), o = gopt(V, 'fart'), vs = o.mode === 'vs', hell = !!o.hell && !vs, best = hell ? L.h : L.b, stars = L.s;
       return `<label>玩法</label><div class="seg"><button class="${!vs ? 'on' : ''}" data-opt="fart:mode:coop">🤝 合作闯关</button><button class="${vs ? 'on' : ''}" data-opt="fart:mode:vs">⚔️ 两队比赛</button></div>
         ${vs ? '' : `<label>难度</label><div class="seg"><button class="${!hell ? 'on' : ''}" data-opt="fart:hell:0">😀 普通（3 条命）</button><button class="${hell ? 'on' : ''}" data-opt="fart:hell:1">😈 地狱（1 条命）</button></div>`}
         <label>${vs ? '地图' : '从哪一关开始'}</label><div class="seg wrap">${FT_MAPS.map((m, i) => { const sn = stars[i + (hell ? 'h' : '')] || 0; return `<button class="${(+o.map || 0) === i ? 'on' : ''}" data-opt="fart:map:${i}" ${!vs && i > best ? 'disabled' : ''}>${m.icon} ${i + 1}. ${m.name}${!vs && sn ? ` <small>${'⭐'.repeat(sn)}</small>` : ''}</button>`; }).join('')}</div>
@@ -6037,7 +6042,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       hs.forEach((id, i) => rings[i % nR].ids.push(id)); bs.forEach(id => { const r = rings.slice().sort((a, b) => a.ids.length - b.ids.length)[0]; if (r.ids.length < 6) r.ids.push(id); });
       let k = 0; const minN = mode === 'vs' ? Math.max(...rings.map(r => r.ids.length)) : 2; // 最少 2 个人就可以玩；比赛时人少那队电脑补齐
       for (const r of rings) while (r.ids.length < Math.min(6, minN)) { const id = 'bot' + Math.random().toString(36).slice(2, 9); r.ids.push(id); st.players.push({ id, name: '电脑 ' + (++k + bs.length), chips: st.startChips || 100, bot: true }); }
-      const hell = mode === 'coop' && +o.hell === 1, map = clamp(+(o.map || 0), 0, mode === 'vs' ? FT_MAPS.length - 1 : Math.min(FT_MAPS.length - 1, (hell ? st.fartHell : st.fartBest) || 0));
+      const hell = mode === 'coop' && +o.hell === 1, map = clamp(+(o.map || 0), 0, mode === 'vs' ? FT_MAPS.length - 1 : Math.min(FT_MAPS.length - 1, (L => hell ? L.h : L.b)(ftLocal(st))));
       return { mode, map, hell, rings, ids: rings.flatMap(r => r.ids), seed: Math.floor(Math.random() * 1e9), ph: 'run', times: null, best: st.fartBest || 0 };
     },
     view(st) { return st.g; },
@@ -6056,6 +6061,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       }
     },
     render(V) {
+      ftLocal(V);
       const g = V.g, done = g.ph === 'done', mk = g.rings.findIndex(r => r.ids.includes(V.you));
       let end = '';
       if (done) {
@@ -7761,7 +7767,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     { k: 'kid', n: '草帽仔', e: '🧢', c: '#6fbf73', spd: 1.05, pow: 1, prj: '🍅' },
     { k: 'gma', n: '辣阿嫲', e: '👵', c: '#a78bfa', spd: 0.95, pow: 1.1, prj: '🧦' },
   ];
-  // 格子打法：地上 9 格、上面 2 层。← → 一次走一格；↑ 跳高一层（再按一次上两层）；↓ 冲过去撞对面（同一层才撞得到）。
+  // 格子打法：地上 9 格、上面 2 层。← → 一次走一格；↑ 跳高一层（再按一次上两层）；在空中按 ↓ 或往前 = 斜斜撞下去（唯一的攻击）。
   // 每撞中一次存能量，能量满了可以放 POWER（地上一整排冲击波，只有跳到最高那层才闪得开）。
   const SG = { N: 9, CW: 100, X0: 100, LH: 120, HANG: 0.55, MOVE: 0.11, DASH: 3, DMG: 10, PW: 26, E_HIT: 25, E_GOT: 10 };
   const sgX = c => SG.X0 + c * SG.CW, sgY = lv => SF.FLOOR - lv * SG.LH;
@@ -7783,17 +7789,20 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   function sfAct(b, a, G, id) { // 一个按键 = 一个动作
     if (b.stun > 0 || b.st === 'ko' || b.cd > 0) return;
     const o = sf.body[sfOpp(G, id)], C = SF_CH[b.ch];
-    if (a === 'l' || a === 'r') { const d = a === 'l' ? -1 : 1, nc = b.c + d; if (nc < 0 || nc >= SG.N || (o && o.c === nc && o.lv === b.lv)) return; b.c = nc; b.cd = SG.MOVE / C.spd; b.st = 'walk'; b.t = 0; sfx.tap(); return; }
+    const fwd = o ? (Math.sign(o.c - b.c) || b.face) : b.face;
+    // 在空中按「下」或「往对方那边」= 斜斜撞下去（唯一的攻击）
+    if (b.lv > 0 && (a === 'd' || (a === 'l' && fwd < 0) || (a === 'r' && fwd > 0))) return sfDive(b, o, G, id, C, fwd);
+    if (a === 'l' || a === 'r') { const d = a === 'l' ? -1 : 1, nc = b.c + d; if (nc < 0 || nc >= SG.N || (o && o.c === nc && o.lv === b.lv)) return; b.c = nc; b.cd = SG.MOVE / C.spd; b.st = b.lv ? 'jump' : 'walk'; b.t = 0; sfx.tap(); return; }
     if (a === 'u') { if (b.lv < 2) { b.lv++; b.hang = SG.HANG; b.cd = 0.08; b.st = 'jump'; b.t = 0; sfx.tap(); } return; }
-    if (a === 'd') { // 冲过去撞
-      const dir = o ? Math.sign(o.c - b.c) || b.face : b.face; b.face = dir; b.st = 'tackle'; b.t = 0; b.cd = 0.32; sfx.whoosh();
-      let hit = false, nc = b.c; for (let k = 1; k <= SG.DASH; k++) { const c2 = b.c + dir * k; if (c2 < 0 || c2 >= SG.N) break; if (o && o.c === c2 && o.lv === b.lv && o.st !== 'ko') { hit = true; break; } nc = c2; }
-      b.c = nc;
-      if (hit) { b.mt = Math.min(100, b.mt + SG.E_HIT); sfSendHit(sfOpp(G, id), Math.round(SG.DMG * C.pow), 2, dir, id); sf.fx.push({ x: sgX(b.c + dir * 0.5), y: sgY(b.lv) - 70, t: 0, e: '💥' }); }
-      return;
-    }
+    if (a === 'd') return; // 在地上按下没用，要先跳
     if (a === 'p' && b.mt >= 100) { b.mt = 0; b.st = 'throw'; b.t = 0; b.cd = 0.5; const dir = o ? Math.sign(o.c - b.c) || b.face : b.face; b.face = dir; sf.prj.push({ x: sgX(b.c), y: SF.FLOOR - 70, vx: dir * 900, by: id, e: C.prj, t: 0, hit: false, wave: 1 }); bcast({ t: 'sfp', x: sgX(b.c), y: SF.FLOOR - 70, vx: dir * 900, by: id, e: C.prj }); sfx.big(); fx.flash('rgba(90,215,255,.35)');
       if (o && o.lv <= 1 && o.st !== 'ko') setTimeout(() => sf && sfSendHit(sfOpp(G, id), Math.round(SG.PW * C.pow), 3, dir, id), Math.abs(o.c - b.c) * 100); }
+  }
+  function sfDive(b, o, G, id, C, dir) { // 从高处斜斜撞下去：一层走两格，路上碰到对面就撞飞他
+    const L = b.lv, dist = L * 2; b.face = dir; b.st = 'tackle'; b.t = 0; b.cd = 0.3; sfx.whoosh();
+    let hit = false, nc = b.c; for (let k = 1; k <= dist; k++) { const c2 = b.c + dir * k; if (c2 < 0 || c2 >= SG.N) break; const lvHere = Math.ceil(L * (dist - k) / dist); if (o && o.c === c2 && o.st !== 'ko' && o.lv <= lvHere) { hit = true; break; } nc = c2; }
+    b.c = nc; b.lv = 0; b.hang = 0;
+    if (hit) { b.mt = Math.min(100, b.mt + SG.E_HIT); sfSendHit(sfOpp(G, id), Math.round(SG.DMG * (0.7 + 0.5 * L) * C.pow), 1 + L, dir, id); sf.fx.push({ x: sgX(b.c + dir * 0.5), y: SF.FLOOR - 70, t: 0, e: '💥' }); }
   }
   function sfSendHit(to, dmg, push, dir, by) { if (to === me.id || (sf.bot[to] && role === 'host') || (role === 'host' && isBot(to))) sfTakeHit(to, { d: dmg, p: push, f: dir, by }); else bcast({ t: 'sfh', to, d: dmg, p: push, f: dir, by }); sfx.hit(); }
   function sfTakeHit(id, h) { // 被撞（只有自己 / 房主替电脑算）
@@ -7815,9 +7824,9 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   function sfBot(b, G, id, dt) { const o = sf.body[sfOpp(G, id)]; if (!o || b.cd > 0 || b.stun > 0) return; const bt = sf.bot[id] || (sf.bot[id] = { th: 0.4 }); bt.th -= dt; if (bt.th > 0) return; bt.th = 0.22 + Math.random() * 0.35;
     const d = o.c - b.c, ad = Math.abs(d), r = Math.random();
     if (b.mt >= 100 && o.lv <= 1 && r < 0.6) return sfAct(b, 'p', G, id);
-    if (o.st === 'tackle' && ad <= 3 && o.lv === b.lv && r < 0.45) return sfAct(b, 'u', G, id);
-    if (ad <= SG.DASH && o.lv === b.lv && r < 0.6) return sfAct(b, 'd', G, id);
-    if (o.lv > b.lv && r < 0.5) return sfAct(b, 'u', G, id);
+    if (o.lv > 0 && ad <= o.lv * 2 && b.lv < o.lv && r < 0.35) return sfAct(b, 'u', G, id); // 闪
+    if (b.lv > 0 && ad <= b.lv * 2 && o.lv <= b.lv && r < 0.75) return sfAct(b, 'd', G, id); // 撞下去
+    if (b.lv < 2 && ad <= 4 && r < 0.7) return sfAct(b, 'u', G, id); // 先跳高
     if (ad > 1) return sfAct(b, d > 0 ? 'r' : 'l', G, id);
     if (r < 0.3) sfAct(b, d > 0 ? 'l' : 'r', G, id); }
   function sfFrame() {
@@ -7888,11 +7897,11 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     const big = (t, c) => { ctx.font = '900 52px sans-serif'; ctx.lineWidth = 8; ctx.strokeStyle = '#3a1f0f'; ctx.fillStyle = c || '#fff'; ctx.textAlign = 'center'; ctx.strokeText(t, W / 2, H * 0.42); ctx.fillText(t, W / 2, H * 0.42); };
     if (G.ph === 'fight' && el < 0) big(el < -1.2 ? `第 ${G.round} 局` : '开打！', '#ffe066');
     if (G.ph === 'between' || (sf.ended && G.ph === 'fight')) big('K.O.!', '#ff5a5a');
-    if (G.ph === 'fight' && el > -0.5 && el < 4 && G.round === 1) { ctx.font = '700 13px sans-serif'; ctx.fillStyle = '#123'; ctx.textAlign = 'center'; ctx.fillText('← → 一格一格走　↑ 跳（两下跳更高）　↓ 冲过去撞', W / 2, 84); }
+    if (G.ph === 'fight' && el > -0.5 && el < 4 && G.round === 1) { ctx.font = '700 13px sans-serif'; ctx.fillStyle = '#123'; ctx.textAlign = 'center'; ctx.fillText('← → 一格一格走　↑ 跳高　在空中按 ↓ 或往前 = 斜斜撞下去', W / 2, 84); }
     if (!G.pair.includes(me.id)) { ctx.font = '700 13px sans-serif'; ctx.fillStyle = '#123'; ctx.fillText(`👀 你在看：${pname(G.pair[0])} VS ${pname(G.pair[1])}`, W / 2, 62); }
   }
   GAMES.street = {
-    icon: '🥋', name: '街头格斗', sub: '一对一街头打架，三局两胜', how: '一对一，三局两胜。只有四个方向：← → 一次走一格；↑ 跳高一层（再按一次跳更高，可以闪开冲撞）；↓ 往对方冲过去撞他（同一层才撞得到，最远冲 3 格）。每撞中一次会存能量，能量满了按 POWER 放大招：一整排冲击波，只有跳到最高那层才闪得开。把人撞到墙会多扣血。键盘：W A S D 或方向键，空白键 / E 放 POWER。其他人在旁边看，赢的人留下打下一个。', tags: ['动作', '派对'], color: '#2f9e44', min: 1, max: 12, chips: false, full: true, fresh: true,
+    icon: '🥋', name: '街头格斗', sub: '一对一街头打架，三局两胜', how: '一对一，三局两胜。只有四个方向：← → 一次走一格；↑ 跳高一层（再按一次跳更高）。攻击只有一种：在空中按 ↓ 或往对方那边按，就会斜斜撞下去（跳一层冲 2 格、两层冲 4 格，越高撞越痛）。在地上撞不到人，要先跳。被撞的时候跳高可以闪。每撞中一次存能量，满了按 POWER 放大招：一整排冲击波，只有跳到最高那层才闪得开。把人撞到墙会多扣血。键盘：W A S D 或方向键，空白键 / E 放 POWER。其他人在旁边看，赢的人留下打下一个。', tags: ['动作', '派对'], color: '#2f9e44', min: 1, max: 12, chips: false, full: true, fresh: true,
     defaults: {},
     start(st, ids) {
       ids = ids.slice(); let k = 0; if (ids.length < 2) { const id = 'bot' + Math.random().toString(36).slice(2, 9); ids.push(id); st.players.push({ id, name: '电脑 ' + ++k, chips: st.startChips || 100, bot: true }); }
@@ -7919,14 +7928,14 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       if (g.ph === 'pick') {
         const my = g.ch[V.you];
         return { html: `<div class="spy"><div class="spy-t big">${esc(pname(g.pair[0]))} 🆚 ${esc(pname(g.pair[1]))}</div>${V.streetKing ? `<p class="hint center">👑 擂台王：${esc(pname(V.streetKing.id))}（连赢 ${V.streetKing.n} 场）</p>` : ''}${inPair ? `<div class="spy-t">选你的人物</div><div class="sfch">${SF_CH.map((c, i) => `<button class="sfc ${my === i ? 'on' : ''}" data-c="${i}" style="--c:${c.c}"><b>${c.e}</b><span>${c.n}</span><small>速度 ${'●'.repeat(Math.round(c.spd * 3))}<br>力气 ${'●'.repeat(Math.round(c.pow * 3))}<br>大招 ${c.prj}</small></button>`).join('')}</div>${g.picked[V.you] ? '<p class="hint center">选好了，等对手</p>' : ''}` : `<p class="hint center">你在旁边看，下一场换你（排队：${g.queue.filter(id => !g.pair.includes(id)).map(pname).map(esc).join(' → ')}）</p>`}
-          <div class="klist"><div class="erow"><span>← →</span><b>一次走一格</b></div><div class="erow"><span>↑</span><b>跳高一层（两下更高）</b></div><div class="erow"><span>↓</span><b>冲过去撞（存能量）</b></div><div class="erow"><span>⚡ POWER</span><b>能量满了放大招（空白键 / E）</b></div></div></div>
+          <div class="klist"><div class="erow"><span>← →</span><b>一次走一格</b></div><div class="erow"><span>↑</span><b>跳高一层（两下更高）</b></div><div class="erow"><span>空中 ↓ / 往前</span><b>斜斜撞下去（越高撞越痛，存能量）</b></div><div class="erow"><span>⚡ POWER</span><b>能量满了放大招（空白键 / E）</b></div></div></div>
           <div class="startbar"><div>${role === 'host' ? '<button class="btn gold big" id="sfGo">开打（没选的用默认）</button>' : '<div class="wait">两个人选好就开打</div>'}</div></div>`,
           bind() { if (inPair) $$('.sfc').forEach(b => (b.onclick = () => { sfx.tap(); A.pick(+b.dataset.c); })); on('sfGo', A.go); } };
       }
       const done = g.ph === 'over';
       const end = done ? `<div class="endcard"><h3>🏆 ${esc(pname(g.win))} 赢了</h3><div class="sub">${g.pair.map(id => `${esc(pname(id))} ${g.wins[id] || 0}`).join(' : ')}${V.streetKing && V.streetKing.id === g.win && V.streetKing.n > 1 ? `　连赢 ${V.streetKing.n} 场！` : ''}</div><p class="hint">下一场：${esc(pname(g.win))} 🆚 ${esc(pname(g.queue.find(id => id !== g.win && !g.pair.includes(id)) || g.pair.find(id => id !== g.win)))}</p><div style="flex:1"></div>${role === 'host' ? '<button class="btn gold big" id="sfNext">下一场</button><button class="btn" id="sfLobby">回大厅</button>' : '<div class="wait">等房主</div>'}</div>` : '';
       return {
-        html: `<div class="cv" id="sfcv">${end}</div>${inPair && !done ? '<div class="sgpad"><div class="sgx"><button class="sgk u" data-k="u">▲</button><button class="sgk l" data-k="l">◀</button><button class="sgk d" data-k="d">▼<small>冲</small></button><button class="sgk r" data-k="r">▶</button></div><button class="sgpw" id="sfPw"><i></i><b>⚡</b><small>POWER</small></button></div>' : ''}`,
+        html: `<div class="cv" id="sfcv">${end}</div>${inPair && !done ? '<div class="sgpad"><div class="sgx"><button class="sgk u" data-k="u">▲</button><button class="sgk l" data-k="l">◀</button><button class="sgk d" data-k="d">▼<small>撞</small></button><button class="sgk r" data-k="r">▶</button></div><button class="sgpw" id="sfPw"><i></i><b>⚡</b><small>POWER</small></button></div>' : ''}`,
         bind() {
           const s = sfSetup(V), cv = $('#sfcv'); if (cv) cv.insertBefore(s.canvas, cv.firstChild); on('sfNext', lobby.start); on('sfLobby', lobby.toLobby);
           $$('.sgk').forEach(el => (el.onpointerdown = e => { e.preventDefault(); sfIn(el.dataset.k); el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 110); }));
