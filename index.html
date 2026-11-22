@@ -1502,7 +1502,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
         await loadRows();
         if (role === 'host') syncPlayers(); else render();
       })
-      .on('broadcast', { event: 'g' }, ({ payload }) => { const G = S && S.phase === 'play' && GAMES[S.game]; if (G && G.onMsg && payload) { try { G.onMsg(payload); } catch (e) { console.error(e); } } })
+      .on('broadcast', { event: 'g' }, ({ payload }) => { const G = S && S.phase === 'play' && GAMES[S.game]; if (!G || !G.onMsg || !payload) return; for (const m of payload.b || [payload]) { try { G.onMsg(m); } catch (e) { console.error(e); } } })
       .on('broadcast', { event: 'e' }, ({ payload }) => { if (payload) fx.emoji(payload.e, pname(payload.id), pcolor(payload.id)); })
       .on('presence', { event: 'sync' }, () => { online = new Set(Object.keys(chan.presenceState())); render(); })
       .subscribe(status => {
@@ -1538,7 +1538,24 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   }
   function fastStop() { try { fast.peer && fast.peer.destroy(); } catch {} fast.peer = null; fast.conn = null; fast.key = ''; }
   function fastSend(payload) { try { if (fast.conn && fast.conn.open) fast.conn.send(payload); } catch {} bcast(payload); }
-  function bcast(payload) { if (chan) { try { chan.send({ type: 'broadcast', event: 'g', payload }); } catch {} } }
+  // 免费服务器整个项目一秒最多 100 条（每个收到的人都算一条），超过就会被踢 → 断线、大家看到不一样。
+  // 所以：每个人的消息先排队，按人数决定多久打包成「一条」发出去；位置这类只留最新那个。
+  const NET_BUDGET = 70, POS_T = new Set(['su', 'ss', 'km', 'kball', 'fi', 'fs', 'fp', 'ip', 'sl', 'sfm']);
+  let outQ = [], outAt = 0, outTimer = null;
+  function netPeers() { return Math.max(1, online.size || (S ? S.players.filter(p => !p.bot).length : 1)); }
+  function netGap() { const n = netPeers(); return n <= 1 ? 60 : Math.max(50, Math.ceil(1000 * n * (n - 1) / NET_BUDGET)); }
+  function bcast(payload) {
+    if (!chan || !payload) return;
+    const k = payload.t && (POS_T.has(payload.t) || (payload.t === 'bm' && 'x' in payload)) ? payload.t + ':' + (payload.id || '') : null;
+    const i = k ? outQ.findIndex(q => q.k === k) : -1;
+    if (i >= 0) outQ[i].p = payload; else outQ.push({ k, p: payload });
+    if (!outTimer) outTimer = setTimeout(netFlush, Math.max(0, outAt + netGap() - Date.now()));
+  }
+  function netFlush() {
+    outTimer = null; if (!chan || !outQ.length) { outQ = []; return; }
+    const b = outQ.map(q => q.p); outQ = []; outAt = Date.now();
+    try { chan.send({ type: 'broadcast', event: 'g', payload: { b } }); } catch {}
+  }
   // 免费服务器一秒最多 100 条消息：人越多，每个人发得越慢
   const netHz = n => clamp(Math.floor(64 / Math.max(1, n)), 4, 12);
   let lastEmoji = 0;
@@ -1549,7 +1566,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
   }
   function leaveRoom(keepLast) {
     if (chan) { try { sb.removeChannel(chan); } catch {} }
-    chan = null; clearInterval(poll); poll = null;
+    chan = null; clearInterval(poll); poll = null; clearTimeout(outTimer); outTimer = null; outQ = [];
     code = null; S = null; V = null; rows = []; online = new Set(); role = null; ui = {};
     if (!keepLast) store.del('pg.lastRoom');
     if (typeof stopAllGames === 'function') stopAllGames();
