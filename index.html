@@ -907,6 +907,18 @@ b.win{color:#4ad66d}b.lose{color:#ff6b6b}
 .sf-r .jump{grid-column:2}.sf-r .hit{grid-column:3}
 .sf-pad{gap:6px;padding-left:8px;padding-right:8px}.sf-pad .br-b{width:62px;height:62px}.sf-pad .br-b.sm{width:54px;height:44px;font-size:16px}.sf-pad .br-l{gap:6px}.sf-r{gap:5px}
 
+/* 格子格斗按钮 */
+.sgpad{display:flex;justify-content:space-between;align-items:center;padding:8px 14px calc(8px + env(safe-area-inset-bottom));background:#161023;touch-action:none;user-select:none;-webkit-user-select:none}
+.sgx{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,58px);gap:6px}
+.sgk{border:0;border-radius:16px;background:#2b2540;color:#fff;font-size:26px;display:flex;flex-direction:column;align-items:center;justify-content:center;touch-action:none;-webkit-tap-highlight-color:transparent}
+.sgk small{font-size:10px;font-weight:800}.sgk.u{grid-column:2;grid-row:1}.sgk.l{grid-column:1;grid-row:2}.sgk.d{grid-column:2;grid-row:2;background:#c9184a}.sgk.r{grid-column:3;grid-row:2}.sgk.on{transform:scale(.92);filter:brightness(1.4)}
+.sgpw{position:relative;overflow:hidden;width:104px;height:104px;border-radius:50%;border:3px solid #3b5bdb;background:#141a33;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;touch-action:none}
+.sgpw i{position:absolute;left:0;right:0;bottom:0;height:calc(var(--p,0)*100%);background:linear-gradient(0deg,#3b5bdb,#5ad7ff);opacity:.7}
+.sgpw b,.sgpw small{position:relative}.sgpw b{font-size:30px}.sgpw small{font-weight:900;font-size:12px}
+.sgpw.ready{border-color:#ffe066;box-shadow:0 0 22px #ffe066;animation:pwpulse .6s infinite alternate}
+@keyframes pwpulse{to{transform:scale(1.06)}}
+@media (orientation:landscape) and (max-height:560px){ .stage>.cv~.sgpad{position:absolute;left:0;right:0;bottom:0;background:transparent;pointer-events:none;padding:8px 18px} .stage>.cv~.sgpad>*{pointer-events:auto} .stage>.cv~.sgpad .sgk{opacity:.85} }
+
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
@@ -7749,94 +7761,77 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     { k: 'kid', n: '草帽仔', e: '🧢', c: '#6fbf73', spd: 1.05, pow: 1, prj: '🍅' },
     { k: 'gma', n: '辣阿嫲', e: '👵', c: '#a78bfa', spd: 0.95, pow: 1.1, prj: '🧦' },
   ];
+  // 格子打法：地上 9 格、上面 2 层。← → 一次走一格；↑ 跳高一层（再按一次上两层）；↓ 冲过去撞对面（同一层才撞得到）。
+  // 每撞中一次存能量，能量满了可以放 POWER（地上一整排冲击波，只有跳到最高那层才闪得开）。
+  const SG = { N: 9, CW: 100, X0: 100, LH: 120, HANG: 0.55, MOVE: 0.11, DASH: 3, DMG: 10, PW: 26, E_HIT: 25, E_GOT: 10 };
+  const sgX = c => SG.X0 + c * SG.CW, sgY = lv => SF.FLOOR - lv * SG.LH;
   let sf = null;
-  function sfStop() { if (sf) { cancelAnimationFrame(sf.raf); window.removeEventListener('keydown', sf.kd); window.removeEventListener('keyup', sf.ku); sf = null; } }
-  const sfBody = (side, ch) => ({ x: side ? 700 : 300, y: SF.FLOOR, vx: 0, vy: 0, face: side ? -1 : 1, air: 0, jumps: 0, hp: SF.HP, mt: 0, st: 'idle', t: 0, combo: 0, hitDone: false, stun: 0, inv: 0, ch });
+  function sfStop() { if (sf) { cancelAnimationFrame(sf.raf); window.removeEventListener('keydown', sf.kd); sf = null; } }
+  const sfBody = (side, ch) => { const c = side ? 6 : 2; return { c, lv: 0, x: sgX(c), y: SF.FLOOR, face: side ? -1 : 1, hp: SF.HP, mt: 0, st: 'idle', t: 0, hang: 0, cd: 0, stun: 0, ch, combo: 0, air: 0 }; };
   function sfSetup(V) {
     const g = V.g, key = V.gid + ':' + g.seed; if (sf && sf.key === key) return sf; sfStop();
-    sf = { key, round: g.round, canvas: document.createElement('canvas'), body: {}, keys: {}, last: performance.now(), sent: 0, prj: [], fx: [], tap: {}, ended: false, bot: {} };
+    sf = { key, round: g.round, canvas: document.createElement('canvas'), body: {}, last: performance.now(), sent: 0, prj: [], fx: [], ended: false, bot: {} };
     g.pair.forEach((id, i) => (sf.body[id] = sfBody(i, g.ch[id] || 0)));
-    const km = { a: 'l', ArrowLeft: 'l', d: 'r', ArrowRight: 'r' };
-    sf.kd = e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key; if (e.repeat) return; if (km[k]) { sfPress(km[k], true); e.preventDefault(); } if (k === 'w' || k === 'ArrowUp' || k === 'k') { sfIn('jump'); e.preventDefault(); } if (k === 's' || k === 'j' || k === 'ArrowDown') { sfIn('atk'); e.preventDefault(); } if (k === 'e' || k === 'l') sfIn('sp'); };
-    sf.ku = e => { const k = e.key.length === 1 ? e.key.toLowerCase() : e.key; if (km[k]) sfPress(km[k], false); };
-    window.addEventListener('keydown', sf.kd); window.addEventListener('keyup', sf.ku);
+    const km = { a: 'l', arrowleft: 'l', d: 'r', arrowright: 'r', w: 'u', arrowup: 'u', s: 'd', arrowdown: 'd', ' ': 'p', e: 'p', enter: 'p' };
+    sf.kd = e => { const k = km[e.key.toLowerCase()]; if (!k || e.repeat) return; e.preventDefault(); sfIn(k); };
+    window.addEventListener('keydown', sf.kd);
     const loop = () => { if (!sf || sf.key !== key) return; sfFrame(); sf.raf = requestAnimationFrame(loop); }; sf.raf = requestAnimationFrame(loop);
     return sf;
   }
-  function sfPress(d, down) { // 走路 + 连按两下 = 闪 / 冲
-    if (down) { const now = performance.now(); if (sf.tap[d] && now - sf.tap[d] < 260) { const b = sf.body[me.id]; if (b) sfIn((d === 'r') === (b.face > 0) ? 'tackle' : 'dash'); sf.tap[d] = 0; } else sf.tap[d] = now; }
-    sf.keys[d] = down;
-  }
   function sfIn(a) { sf.q = a; }
   const sfOpp = (G, id) => G.pair.find(x => x !== id);
-  function sfAct(b, a, G, id) { // 开始一个动作
-    if (b.stun > 0 || b.st === 'ko' || b.st === 'down') return;
-    const C = SF_CH[b.ch];
-    if (a === 'jump') { if (b.jumps < 2) { b.vy = -(b.jumps ? SF.JMP2 : SF.JMP); b.jumps++; b.air = 1; b.st = 'jump'; sfx.tap(); } return; }
-    if (a === 'atk') { if (b.air) { if (b.st !== 'kick') { b.st = 'kick'; b.t = 0; b.hitDone = false; b.vy = Math.max(b.vy, 300); b.vx = b.face * 420; } return; } if (b.st === 'punch' && b.t > 0.12 && b.combo < 3) { b.combo++; b.t = 0; b.hitDone = false; sfx.whoosh(); return; } if (b.st !== 'punch' && b.st !== 'tackle') { b.st = 'punch'; b.combo = 1; b.t = 0; b.hitDone = false; sfx.whoosh(); } return; }
-    if (a === 'tackle' && !b.air && b.st !== 'tackle') { b.st = 'tackle'; b.t = 0; b.hitDone = false; b.vx = b.face * 720 * C.spd; sfx.whoosh(); return; }
-    if (a === 'dash' && !b.air) { b.st = 'dash'; b.t = 0; b.vx = -b.face * 560; b.inv = 0.18; return; }
-    if (a === 'sp' && b.mt >= 1 && b.st !== 'throw') { b.mt -= 1; b.st = 'throw'; b.t = 0; const p = { x: b.x + b.face * 40, y: b.y - 70, vx: b.face * 820, by: id, e: C.prj, t: 0, hit: false }; sf.prj.push(p); bcast({ t: 'sfp', x: Math.round(p.x), y: Math.round(p.y), vx: p.vx, by: id, e: p.e }); sfx.shoot(); }
+  function sfAct(b, a, G, id) { // 一个按键 = 一个动作
+    if (b.stun > 0 || b.st === 'ko' || b.cd > 0) return;
+    const o = sf.body[sfOpp(G, id)], C = SF_CH[b.ch];
+    if (a === 'l' || a === 'r') { const d = a === 'l' ? -1 : 1, nc = b.c + d; if (nc < 0 || nc >= SG.N || (o && o.c === nc && o.lv === b.lv)) return; b.c = nc; b.cd = SG.MOVE / C.spd; b.st = 'walk'; b.t = 0; sfx.tap(); return; }
+    if (a === 'u') { if (b.lv < 2) { b.lv++; b.hang = SG.HANG; b.cd = 0.08; b.st = 'jump'; b.t = 0; sfx.tap(); } return; }
+    if (a === 'd') { // 冲过去撞
+      const dir = o ? Math.sign(o.c - b.c) || b.face : b.face; b.face = dir; b.st = 'tackle'; b.t = 0; b.cd = 0.32; sfx.whoosh();
+      let hit = false, nc = b.c; for (let k = 1; k <= SG.DASH; k++) { const c2 = b.c + dir * k; if (c2 < 0 || c2 >= SG.N) break; if (o && o.c === c2 && o.lv === b.lv && o.st !== 'ko') { hit = true; break; } nc = c2; }
+      b.c = nc;
+      if (hit) { b.mt = Math.min(100, b.mt + SG.E_HIT); sfSendHit(sfOpp(G, id), Math.round(SG.DMG * C.pow), 2, dir, id); sf.fx.push({ x: sgX(b.c + dir * 0.5), y: sgY(b.lv) - 70, t: 0, e: '💥' }); }
+      return;
+    }
+    if (a === 'p' && b.mt >= 100) { b.mt = 0; b.st = 'throw'; b.t = 0; b.cd = 0.5; const dir = o ? Math.sign(o.c - b.c) || b.face : b.face; b.face = dir; sf.prj.push({ x: sgX(b.c), y: SF.FLOOR - 70, vx: dir * 900, by: id, e: C.prj, t: 0, hit: false, wave: 1 }); bcast({ t: 'sfp', x: sgX(b.c), y: SF.FLOOR - 70, vx: dir * 900, by: id, e: C.prj }); sfx.big(); fx.flash('rgba(90,215,255,.35)');
+      if (o && o.lv <= 1 && o.st !== 'ko') setTimeout(() => sf && sfSendHit(sfOpp(G, id), Math.round(SG.PW * C.pow), 3, dir, id), Math.abs(o.c - b.c) * 100); }
   }
-  function sfHitCheck(b, G, id) { // 打中对方？
-    if (b.hitDone) return; const o = sfOpp(G, id), ob = sf.body[o]; if (!ob) return; const C = SF_CH[b.ch];
-    let act = false, dmg = 0, kb = 0, kd = 0;
-    if (b.st === 'punch' && b.t > 0.06 && b.t < 0.16) { act = true; dmg = b.combo === 3 ? 8 : 5; kb = b.combo === 3 ? 420 : 160; kd = b.combo === 3 ? 1 : 0; }
-    if (b.st === 'kick' && b.air) { act = true; dmg = 7; kb = 300; }
-    if (b.st === 'tackle' && b.t < 0.3) { act = true; dmg = 9; kb = 520; kd = 1; }
-    if (!act) return; const dx = (ob.x - b.x) * b.face, dy = Math.abs(ob.y - b.y);
-    if (dx > -10 && dx < (b.st === 'tackle' ? 70 : 88) && dy < 90) { b.hitDone = true; b.mt = Math.min(3, b.mt + 0.22); sfSendHit(o, Math.round(dmg * C.pow), kb, kd, b.face, id); sf.fx.push({ x: (b.x + ob.x) / 2, y: b.y - 70, t: 0, e: dmg >= 8 ? '💥' : '✨' }); if (b.st === 'tackle') b.vx *= 0.2; }
-  }
-  function sfSendHit(to, dmg, kb, kd, dir, by) { if (to === me.id || (sf.bot[to] && role === 'host')) sfTakeHit(to, { d: dmg, k: kb, kd, f: dir, by }); else bcast({ t: 'sfh', to, d: dmg, k: kb, kd, f: dir, by }); sfx.hit(); }
-  function sfTakeHit(id, h) { // 被打（只有自己 / 房主替电脑算）
-    const b = sf.body[id]; if (!b || b.inv > 0 || b.st === 'ko') return;
-    const block = !b.air && b.stun <= 0 && b.holdBack && b.st !== 'punch' && b.st !== 'tackle' && !h.kd;
-    if (block) { b.hp -= Math.max(1, Math.round(h.d * 0.2)); b.vx = h.f * 220; b.st = 'block'; b.t = 0; b.mt = Math.min(3, b.mt + 0.08); if (id === me.id) sfx.tap(); }
-    else { b.hp -= h.d; b.stun = h.kd ? 0.7 : 0.28; b.st = h.kd ? 'down' : 'hurt'; b.t = 0; b.vx = h.f * h.k; if (h.kd) { b.vy = -420; b.air = 1; } b.mt = Math.min(3, b.mt + 0.12); if (id === me.id) { fx.vib(h.kd ? [80, 40, 120] : 40); if (h.kd) fx.shake('#sfcv'); } }
+  function sfSendHit(to, dmg, push, dir, by) { if (to === me.id || (sf.bot[to] && role === 'host') || (role === 'host' && isBot(to))) sfTakeHit(to, { d: dmg, p: push, f: dir, by }); else bcast({ t: 'sfh', to, d: dmg, p: push, f: dir, by }); sfx.hit(); }
+  function sfTakeHit(id, h) { // 被撞（只有自己 / 房主替电脑算）
+    const b = sf.body[id]; if (!b || b.st === 'ko') return;
+    let wall = 0, nc = b.c; for (let k = 0; k < h.p; k++) { const c2 = nc + h.f; if (c2 < 0 || c2 >= SG.N) { wall = 1; break; } nc = c2; }
+    b.c = nc; b.lv = 0; b.hp -= h.d + (wall ? 5 : 0); b.stun = 0.4; b.st = 'hurt'; b.t = 0; b.mt = Math.min(100, b.mt + SG.E_GOT);
+    if (wall) sf.fx.push({ x: sgX(b.c), y: SF.FLOOR - 60, t: 0, e: '🧱' });
+    if (id === me.id) { fx.vib(wall ? [80, 40, 120] : 50); if (wall || h.d > 15) fx.shake('#sfcv'); }
     if (b.hp <= 0 && !sf.ended) { b.hp = 0; b.st = 'ko'; b.stun = 99; sf.ended = true; sfx.boom(); const G = S.g, w = sfOpp(G, id); save(st => sfRoundEnd(st, w)); bcast({ t: 'sfko', id }); }
   }
   function sfRoundEnd(st, w) { const g = st.g; if (g.ph !== 'fight' || g.roundWin[g.round]) return false; g.roundWin[g.round] = w; g.wins[w] = (g.wins[w] || 0) + 1; if (g.wins[w] >= SF.WINS) { g.ph = 'over'; g.win = w; award(st, [w, sfOpp(g, w)]); st.streetKing = { id: w, n: (st.streetKing && st.streetKing.id === w ? st.streetKing.n : 0) + 1 }; } else { g.ph = 'between'; g.next = Date.now(); } }
-  function sfPhys(b, dir, dt, id, G) {
-    const C = SF_CH[b.ch], o = sf.body[sfOpp(G, id)];
-    b.t += dt; b.stun = Math.max(0, b.stun - dt); b.inv = Math.max(0, b.inv - dt);
-    if (o && b.st !== 'ko' && !b.air && b.stun <= 0 && !['punch', 'tackle', 'dash', 'throw'].includes(b.st)) b.face = o.x > b.x ? 1 : -1;
-    b.holdBack = dir && dir === -b.face;
-    const busy = b.stun > 0 || ['punch', 'tackle', 'dash', 'throw', 'ko', 'down'].includes(b.st);
-    if (!busy) { const tv = dir * 270 * C.spd * (b.holdBack ? 0.7 : 1); b.vx += (tv - b.vx) * Math.min(1, dt * (b.air ? 5 : 14)); }
-    else if (!b.air) b.vx *= Math.pow(0.02, dt);
-    b.vy += SF.G * dt; b.x = clamp(b.x + b.vx * dt, 40, SF.W - 40); b.y += b.vy * dt;
-    if (b.y >= SF.FLOOR) { if (b.air && b.st === 'kick') b.st = 'idle'; b.y = SF.FLOOR; b.vy = 0; b.air = 0; b.jumps = 0; } else b.air = 1;
-    if (o && !b.air && !o.air && Math.abs(o.x - b.x) < 46) b.x = o.x - Math.sign(o.x - b.x || 1) * 46; // 不要叠在一起
-    if (b.st === 'punch' && b.t > (b.combo === 3 ? 0.36 : 0.26)) b.st = 'idle';
-    if (b.st === 'tackle' && b.t > 0.38) b.st = 'idle';
-    if (b.st === 'dash' && b.t > 0.24) b.st = 'idle';
-    if (b.st === 'throw' && b.t > 0.3) b.st = 'idle';
-    if ((b.st === 'hurt' || b.st === 'block') && b.t > 0.28 && b.stun <= 0) b.st = 'idle';
-    if (b.st === 'down' && b.stun <= 0 && !b.air) { b.st = 'idle'; b.inv = 0.4; }
-    if (b.st === 'jump' && !b.air) b.st = 'idle';
-    if (!busy && b.st === 'idle' && dir) b.st = 'walk'; else if (b.st === 'walk' && !dir) b.st = 'idle';
+  function sfTick(b, dt, G, id) { // 计时、掉下来、画面位置慢慢靠过去
+    b.t += dt; b.cd = Math.max(0, b.cd - dt); b.stun = Math.max(0, b.stun - dt);
+    if (b.lv > 0) { b.hang -= dt; if (b.hang <= 0) { b.lv--; b.hang = 0.22; } }
+    const o = sf.body[sfOpp(G, id)]; if (o && b.st !== 'tackle' && b.st !== 'ko') b.face = o.c > b.c ? 1 : o.c < b.c ? -1 : b.face;
+    if (b.st !== 'ko' && b.st !== 'idle' && b.t > (b.st === 'hurt' ? 0.4 : 0.3)) b.st = b.lv ? 'jump' : 'idle';
+    b.air = b.lv > 0 ? 1 : 0; const tx = sgX(b.c), ty = sgY(b.lv), k = Math.min(1, dt * (b.st === 'tackle' ? 30 : 16)); b.x += (tx - b.x) * k; b.y += (ty - b.y) * k;
   }
-  function sfBot(b, G, id, dt) { const o = sf.body[sfOpp(G, id)]; if (!o) return 0; const bt = sf.bot[id] || (sf.bot[id] = { th: 0, dir: 0 }); bt.th -= dt; const d = o.x - b.x, ad = Math.abs(d);
-    if (bt.th <= 0) { bt.th = 0.18 + Math.random() * 0.25; const r = Math.random(); bt.dir = ad > 90 ? Math.sign(d) : r < 0.25 ? -Math.sign(d) : 0;
-      if (ad < 95 && r < 0.55) sfAct(b, 'atk', G, id); else if (ad > 160 && ad < 330 && r < 0.12) sfAct(b, 'tackle', G, id); else if (b.mt >= 1 && ad > 250 && r < 0.2) sfAct(b, 'sp', G, id); else if (r > 0.92) sfAct(b, 'jump', G, id);
-      if (ad < 110 && (o.st === 'punch' || o.st === 'tackle') && Math.random() < 0.5) bt.dir = -Math.sign(d); }
-    if (b.st === 'punch' && b.combo < 3 && b.t > 0.14 && Math.random() < 0.3) sfAct(b, 'atk', G, id);
-    return bt.dir; }
+  function sfBot(b, G, id, dt) { const o = sf.body[sfOpp(G, id)]; if (!o || b.cd > 0 || b.stun > 0) return; const bt = sf.bot[id] || (sf.bot[id] = { th: 0.4 }); bt.th -= dt; if (bt.th > 0) return; bt.th = 0.22 + Math.random() * 0.35;
+    const d = o.c - b.c, ad = Math.abs(d), r = Math.random();
+    if (b.mt >= 100 && o.lv <= 1 && r < 0.6) return sfAct(b, 'p', G, id);
+    if (o.st === 'tackle' && ad <= 3 && o.lv === b.lv && r < 0.45) return sfAct(b, 'u', G, id);
+    if (ad <= SG.DASH && o.lv === b.lv && r < 0.6) return sfAct(b, 'd', G, id);
+    if (o.lv > b.lv && r < 0.5) return sfAct(b, 'u', G, id);
+    if (ad > 1) return sfAct(b, d > 0 ? 'r' : 'l', G, id);
+    if (r < 0.3) sfAct(b, d > 0 ? 'l' : 'r', G, id); }
   function sfFrame() {
     const G = S && S.phase === 'play' && S.game === 'street' && S.g; if (!G || !sf) return;
     const now = performance.now(), dt = Math.min(0.033, (now - sf.last) / 1000); sf.last = now;
     if (G.round !== sf.round) { sf.round = G.round; G.pair.forEach((id, i) => (sf.body[id] = sfBody(i, G.ch[id] || 0))); sf.ended = false; sf.prj = []; sf.bot = {}; }
-    const el = fx.t('sf:' + G.seed + ':' + G.round) / 1000 - 2.4, fight = el >= 0 && G.ph === 'fight' && !sf.ended;
-    const mine = G.pair.includes(me.id) ? me.id : null;
-    if (mine) { const b = sf.body[mine]; const dir = fight ? (sf.keys.r || sf.dir > 0 ? 1 : 0) - (sf.keys.l || sf.dir < 0 ? 1 : 0) : 0; if (fight && sf.q) sfAct(b, sf.q, G, mine); sf.q = null; sfPhys(b, dir, dt, mine, G); if (fight) sfHitCheck(b, G, mine); if (now - sf.sent > 50) { sf.sent = now; bcast({ t: 'sfm', id: mine, x: Math.round(b.x), y: Math.round(b.y), f: b.face, s: b.st, c: b.combo, hp: b.hp, m: Math.round(b.mt * 100) / 100, a: b.air }); } }
-    if (role === 'host') for (const id of G.pair) if (isBot(id)) { const b = sf.body[id]; const dir = fight ? sfBot(b, G, id, dt) : 0; sfPhys(b, dir, dt, id, G); if (fight) sfHitCheck(b, G, id); if (!b.sent || now - b.sent > 50) { b.sent = now; bcast({ t: 'sfm', id, x: Math.round(b.x), y: Math.round(b.y), f: b.face, s: b.st, c: b.combo, hp: b.hp, m: Math.round(b.mt * 100) / 100, a: b.air }); } }
-    for (const id of G.pair) { if (id === mine || (isBot(id) && role === 'host')) continue; const b = sf.body[id]; if (b && b.tx != null) { b.x += (b.tx - b.x) * Math.min(1, dt * 18); b.y += (b.ty - b.y) * Math.min(1, dt * 18); b.t += dt; } }
-    // 大招飞出去
-    for (const p of sf.prj) { p.x += p.vx * dt; p.t += dt; const owner = p.by === mine || (isBot(p.by) && role === 'host'); if (owner && !p.hit && fight) { const o = sfOpp(G, p.by), ob = sf.body[o]; if (ob && Math.abs(ob.x - p.x) < 40 && Math.abs(ob.y - 60 - p.y) < 70) { p.hit = true; sfSendHit(o, 15, 480, 1, Math.sign(p.vx), p.by); sf.fx.push({ x: p.x, y: p.y, t: 0, e: '💥' }); } } }
-    sf.prj = sf.prj.filter(p => !p.hit && p.t < 1.6);
-    // 时间到：房主看谁血多
+    const el = fx.t('sf:' + G.seed + ':' + G.round) / 1000 - 2.4, fight = el >= 0 && G.ph === 'fight' && !sf.ended, mine = G.pair.includes(me.id) ? me.id : null;
+    if (mine) { const b = sf.body[mine]; if (fight && sf.q) sfAct(b, sf.q, G, mine); sf.q = null; sfTick(b, dt, G, mine); if (now - sf.sent > 50) { sf.sent = now; bcast({ t: 'sfm', id: mine, c: b.c, lv: b.lv, f: b.face, s: b.st, hp: b.hp, m: b.mt }); } }
+    if (role === 'host') for (const id of G.pair) if (isBot(id)) { const b = sf.body[id]; if (fight) sfBot(b, G, id, dt); sfTick(b, dt, G, id); if (!b.sent || now - b.sent > 50) { b.sent = now; bcast({ t: 'sfm', id, c: b.c, lv: b.lv, f: b.face, s: b.st, hp: b.hp, m: b.mt }); } }
+    for (const id of G.pair) { if (id === mine || (isBot(id) && role === 'host')) continue; const b = sf.body[id]; if (b) sfTick(b, dt, G, id); }
+    for (const p of sf.prj) { p.x += p.vx * dt; p.t += dt; } sf.prj = sf.prj.filter(p => p.t < 1.4);
     if (role === 'host' && G.ph === 'fight' && el > SF.TIME && !sf.ended) { sf.ended = true; const [a, b2] = G.pair, w = (sf.body[a].hp >= sf.body[b2].hp) ? a : b2; save(st => sfRoundEnd(st, w)); }
     if (role === 'host' && G.ph === 'between' && Date.now() - G.next > 2600 && fx.once('sfnext:' + G.seed + ':' + G.round)) save(st => { const g = st.g; if (g.ph !== 'between') return false; g.round += 1; g.ph = 'fight'; });
+    const pb = $('#sfPw'); if (pb && mine) { const full = sf.body[mine].mt >= 100; pb.classList.toggle('ready', full); pb.style.setProperty('--p', (sf.body[mine].mt / 100).toFixed(2)); }
     sfDraw(G, el);
   }
   function sfDrawFighter(ctx, b, X, Y, s, id, G) {
@@ -7876,6 +7871,8 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     ctx.fillStyle = '#7fae5a'; ctx.fillRect(0, Y(420), W, 60 * s); ctx.fillStyle = '#e8dcc0'; ctx.fillRect(0, Y(480), W, 50 * s); ctx.fillStyle = '#c9b996'; ctx.fillRect(0, Y(528), W, 6 * s);
     ctx.fillStyle = '#55595f'; ctx.fillRect(0, Y(534), W, H); ctx.fillStyle = '#f2d14b'; for (let x = 0; x < SF.W; x += 120) ctx.fillRect(X(x), Y(640), 60 * s, 6 * s);
     ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.roundRect(X(-80), Y(650), 260 * s, 80 * s, 20 * s); ctx.fill(); ctx.fillStyle = '#2f6db5'; ctx.beginPath(); ctx.roundRect(X(840), Y(650), 260 * s, 80 * s, 20 * s); ctx.fill();
+    // 格子
+    for (let c = 0; c < SG.N; c++) { ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 2; ctx.strokeRect(X(sgX(c) - SG.CW / 2 + 4), Y(SF.FLOOR) - 4 * s, (SG.CW - 8) * s, 14 * s); for (let lv = 1; lv <= 2; lv++) { ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fillRect(X(sgX(c) - SG.CW / 2 + 10), Y(sgY(lv)) - 2, (SG.CW - 20) * s, 3); } }
     // 人
     for (const id of G.pair) { const b = sf.body[id]; if (b) sfDrawFighter(ctx, b, X, Y, s, id, G); }
     for (const p of sf.prj) { ctx.font = `${Math.round(40 * s)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.save(); ctx.translate(X(p.x), Y(p.y)); ctx.rotate(p.t * 12); ctx.fillText(p.e, 0, 0); ctx.restore(); }
@@ -7884,17 +7881,18 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     const bar = (id, side) => { const b = sf.body[id]; if (!b) return; const bw = Math.min(W * 0.38, 300), x0 = side ? W - 12 - bw : 12, C = SF_CH[b.ch];
       ctx.fillStyle = '#1f7a4d'; ctx.beginPath(); ctx.roundRect(x0 - 4, 8, bw + 8, 46, 10); ctx.fill(); ctx.fillStyle = '#123'; ctx.fillRect(x0 + 34, 14, bw - 38, 14); const hp = clamp(b.hp / SF.HP, 0, 1); ctx.fillStyle = hp > 0.3 ? '#ffc93c' : '#ff5a5a'; ctx.fillRect(side ? x0 + 34 + (bw - 38) * (1 - hp) : x0 + 34, 14, (bw - 38) * hp, 14);
       ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(C.e, side ? x0 + bw - 14 : x0 + 16, 30);
-      for (let k = 0; k < 3; k++) { ctx.fillStyle = b.mt >= k + 1 ? '#5ad7ff' : b.mt > k ? 'rgba(90,215,255,.4)' : '#223'; ctx.beginPath(); ctx.arc(x0 + 46 + k * 22 + (side ? bw - 120 : 0), 40, 7, 0, 7); ctx.fill(); }
+      ctx.fillStyle = '#223'; ctx.fillRect(x0 + 34, 34, bw - 38, 10); ctx.fillStyle = b.mt >= 100 ? `hsl(${(performance.now() / 4) % 360},90%,60%)` : '#5ad7ff'; const ew = (bw - 38) * clamp(b.mt / 100, 0, 1); ctx.fillRect(side ? x0 + 34 + (bw - 38) - ew : x0 + 34, 34, ew, 10); if (b.mt >= 100) { ctx.fillStyle = '#fff'; ctx.font = '900 10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('POWER!', x0 + 34 + (bw - 38) / 2, 40); }
       ctx.fillStyle = '#fff'; ctx.font = '800 11px sans-serif'; ctx.textAlign = side ? 'right' : 'left'; ctx.fillText(`${pname(id).slice(0, 6)} ${'🏆'.repeat(G.wins[id] || 0)}`, side ? x0 + bw - 40 : x0 + 40, 66); };
     bar(G.pair[0], 0); bar(G.pair[1], 1);
     const left = Math.max(0, Math.ceil(SF.TIME - Math.max(0, el))); ctx.fillStyle = '#1f7a4d'; ctx.beginPath(); ctx.roundRect(W / 2 - 30, 6, 60, 40, 10); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = '900 24px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(G.ph === 'fight' ? left : '--', W / 2, 27);
     const big = (t, c) => { ctx.font = '900 52px sans-serif'; ctx.lineWidth = 8; ctx.strokeStyle = '#3a1f0f'; ctx.fillStyle = c || '#fff'; ctx.textAlign = 'center'; ctx.strokeText(t, W / 2, H * 0.42); ctx.fillText(t, W / 2, H * 0.42); };
     if (G.ph === 'fight' && el < 0) big(el < -1.2 ? `第 ${G.round} 局` : '开打！', '#ffe066');
     if (G.ph === 'between' || (sf.ended && G.ph === 'fight')) big('K.O.!', '#ff5a5a');
+    if (G.ph === 'fight' && el > -0.5 && el < 4 && G.round === 1) { ctx.font = '700 13px sans-serif'; ctx.fillStyle = '#123'; ctx.textAlign = 'center'; ctx.fillText('← → 一格一格走　↑ 跳（两下跳更高）　↓ 冲过去撞', W / 2, 84); }
     if (!G.pair.includes(me.id)) { ctx.font = '700 13px sans-serif'; ctx.fillStyle = '#123'; ctx.fillText(`👀 你在看：${pname(G.pair[0])} VS ${pname(G.pair[1])}`, W / 2, 62); }
   }
   GAMES.street = {
-    icon: '🥋', name: '街头格斗', sub: '一对一街头打架，三局两胜', how: '两个人在街上一对一打，其他人看，赢的人留下打下一个。键盘：A / D 走路，W 跳（空中再按二段跳），S 打（连按三下连招，最后一下会把人打倒），E 放大招（蓝色格满一格才可以）。连按两下 A / D：往后闪 / 往前冲撞。按住「往后」= 挡（只扣一点血）。手机有按钮。', tags: ['动作', '派对'], color: '#2f9e44', min: 1, max: 12, chips: false, full: true, fresh: true,
+    icon: '🥋', name: '街头格斗', sub: '一对一街头打架，三局两胜', how: '一对一，三局两胜。只有四个方向：← → 一次走一格；↑ 跳高一层（再按一次跳更高，可以闪开冲撞）；↓ 往对方冲过去撞他（同一层才撞得到，最远冲 3 格）。每撞中一次会存能量，能量满了按 POWER 放大招：一整排冲击波，只有跳到最高那层才闪得开。把人撞到墙会多扣血。键盘：W A S D 或方向键，空白键 / E 放 POWER。其他人在旁边看，赢的人留下打下一个。', tags: ['动作', '派对'], color: '#2f9e44', min: 1, max: 12, chips: false, full: true, fresh: true,
     defaults: {},
     start(st, ids) {
       ids = ids.slice(); let k = 0; if (ids.length < 2) { const id = 'bot' + Math.random().toString(36).slice(2, 9); ids.push(id); st.players.push({ id, name: '电脑 ' + ++k, chips: st.startChips || 100, bot: true }); }
@@ -7910,7 +7908,7 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
     },
     onMsg(m) {
       if (!sf) return;
-      if (m.t === 'sfm' && m.id !== me.id && !(role === 'host' && isBot(m.id))) { const b = sf.body[m.id]; if (b) { b.tx = m.x; b.ty = m.y; if (b.st !== m.s) b.t = 0; Object.assign(b, { face: m.f, st: m.s, combo: m.c, hp: m.hp, mt: m.m, air: m.a }); } }
+      if (m.t === 'sfm' && m.id !== me.id && !(role === 'host' && isBot(m.id))) { const b = sf.body[m.id]; if (b) { if (b.st !== m.s) b.t = 0; Object.assign(b, { c: m.c, lv: m.lv, hang: 1, face: m.f, st: m.s, hp: m.hp, mt: m.m }); } }
       if (m.t === 'sfh' && (m.to === me.id || (role === 'host' && isBot(m.to)))) sfTakeHit(m.to, m);
       if (m.t === 'sfh') sfx.hit();
       if (m.t === 'sfp' && m.by !== me.id) sf.prj.push({ x: m.x, y: m.y, vx: m.vx, by: m.by, e: m.e, t: 0, hit: false });
@@ -7921,20 +7919,18 @@ if (typeof module !== 'undefined') module.exports = { BL, AV };
       if (g.ph === 'pick') {
         const my = g.ch[V.you];
         return { html: `<div class="spy"><div class="spy-t big">${esc(pname(g.pair[0]))} 🆚 ${esc(pname(g.pair[1]))}</div>${V.streetKing ? `<p class="hint center">👑 擂台王：${esc(pname(V.streetKing.id))}（连赢 ${V.streetKing.n} 场）</p>` : ''}${inPair ? `<div class="spy-t">选你的人物</div><div class="sfch">${SF_CH.map((c, i) => `<button class="sfc ${my === i ? 'on' : ''}" data-c="${i}" style="--c:${c.c}"><b>${c.e}</b><span>${c.n}</span><small>速度 ${'●'.repeat(Math.round(c.spd * 3))}<br>力气 ${'●'.repeat(Math.round(c.pow * 3))}<br>大招 ${c.prj}</small></button>`).join('')}</div>${g.picked[V.you] ? '<p class="hint center">选好了，等对手</p>' : ''}` : `<p class="hint center">你在旁边看，下一场换你（排队：${g.queue.filter(id => !g.pair.includes(id)).map(pname).map(esc).join(' → ')}）</p>`}
-          <div class="klist"><div class="erow"><span>⌨️ 键盘</span><b>A D 走　W 跳　S 打　E 大招</b></div><div class="erow"><span>连按两下</span><b>往后 = 闪　往前 = 冲撞</b></div><div class="erow"><span>按住往后</span><b>挡住（少扣血）</b></div></div></div>
+          <div class="klist"><div class="erow"><span>← →</span><b>一次走一格</b></div><div class="erow"><span>↑</span><b>跳高一层（两下更高）</b></div><div class="erow"><span>↓</span><b>冲过去撞（存能量）</b></div><div class="erow"><span>⚡ POWER</span><b>能量满了放大招（空白键 / E）</b></div></div></div>
           <div class="startbar"><div>${role === 'host' ? '<button class="btn gold big" id="sfGo">开打（没选的用默认）</button>' : '<div class="wait">两个人选好就开打</div>'}</div></div>`,
           bind() { if (inPair) $$('.sfc').forEach(b => (b.onclick = () => { sfx.tap(); A.pick(+b.dataset.c); })); on('sfGo', A.go); } };
       }
       const done = g.ph === 'over';
       const end = done ? `<div class="endcard"><h3>🏆 ${esc(pname(g.win))} 赢了</h3><div class="sub">${g.pair.map(id => `${esc(pname(id))} ${g.wins[id] || 0}`).join(' : ')}${V.streetKing && V.streetKing.id === g.win && V.streetKing.n > 1 ? `　连赢 ${V.streetKing.n} 场！` : ''}</div><p class="hint">下一场：${esc(pname(g.win))} 🆚 ${esc(pname(g.queue.find(id => id !== g.win && !g.pair.includes(id)) || g.pair.find(id => id !== g.win)))}</p><div style="flex:1"></div>${role === 'host' ? '<button class="btn gold big" id="sfNext">下一场</button><button class="btn" id="sfLobby">回大厅</button>' : '<div class="wait">等房主</div>'}</div>` : '';
       return {
-        html: `<div class="cv" id="sfcv">${end}</div>${inPair && !done ? '<div class="br-pad sf-pad"><div class="br-l"><button class="br-b" id="sfL">◀</button><button class="br-b" id="sfR">▶</button></div><div class="sf-r"><button class="br-b sm" id="sfDash">↩<small>闪</small></button><button class="br-b sm" id="sfTk">💨<small>冲撞</small></button><button class="br-b sm sp" id="sfSp">⭐<small>大招</small></button><button class="br-b jump" id="sfJ">⤴<small>跳</small></button><button class="br-b hit" id="sfA">👊<small>打</small></button></div></div>' : ''}`,
+        html: `<div class="cv" id="sfcv">${end}</div>${inPair && !done ? '<div class="sgpad"><div class="sgx"><button class="sgk u" data-k="u">▲</button><button class="sgk l" data-k="l">◀</button><button class="sgk d" data-k="d">▼<small>冲</small></button><button class="sgk r" data-k="r">▶</button></div><button class="sgpw" id="sfPw"><i></i><b>⚡</b><small>POWER</small></button></div>' : ''}`,
         bind() {
           const s = sfSetup(V), cv = $('#sfcv'); if (cv) cv.insertBefore(s.canvas, cv.firstChild); on('sfNext', lobby.start); on('sfLobby', lobby.toLobby);
-          const hold = (id, d) => { const b = $(id); if (!b) return; b.onpointerdown = e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch {} s.dir = d; b.classList.add('on'); }; b.onpointerup = b.onpointercancel = b.onlostpointercapture = () => { if (s.dir === d) s.dir = 0; b.classList.remove('on'); }; };
-          hold('#sfL', -1); hold('#sfR', 1);
-          const tap = (id, a) => { const b = $(id); if (b) b.onpointerdown = e => { e.preventDefault(); sfIn(a); b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 120); }; };
-          tap('#sfJ', 'jump'); tap('#sfA', 'atk'); tap('#sfSp', 'sp'); tap('#sfTk', 'tackle'); tap('#sfDash', 'dash');
+          $$('.sgk').forEach(el => (el.onpointerdown = e => { e.preventDefault(); sfIn(el.dataset.k); el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 110); }));
+          const pw = $('#sfPw'); if (pw) pw.onpointerdown = e => { e.preventDefault(); sfIn('p'); };
           if (g.ph === 'fight' && fx.once('sfr:' + g.seed + ':' + g.round)) sfx.drum();
           if (done && fx.once('sfdone:' + g.seed)) g.win === V.you ? (sfx.big(), fx.confetti()) : sfx.lose();
         },
